@@ -1,0 +1,182 @@
+<html>
+	<head>
+		<title>ESP OTA</title>
+	</head>
+
+	<body onload="getstatus()">
+
+		<table>
+		    <tr><td>	
+			<input type='file' id='selectedFile' accept=".bin" onchange="fileNameChange()" style="display:none">
+			<label id='file-input' for='selectedFile'>Choose file...</label>
+			<input type='submit' id="upload_button" class="btn" value='Update Firmware' onclick="updateFirmware()">
+			
+			<br>
+			<div id='prgbar'>
+				<div id='bar'></div>
+			</div>
+			<div id='progress'></div>
+			
+			<h4 id="latest_firmware"></h4>
+			<h4 id="status"></h4>
+
+			</td></tr>
+		</table>
+		
+		<script>
+			var seconds = 10;
+			var theTimer;
+
+			function fileNameChange() {
+				var x = document.getElementById("selectedFile");
+				var file = x.files[0];
+				document.getElementById('file-input').innerHTML = file.name;
+			}
+
+			function updateFirmware() {
+				var fileSelect = document.getElementById("selectedFile").files;
+
+				if (fileSelect.length == 0) {
+				    alert("No file selected!");
+				else if (fileInput[0].size > 576*1024) {
+					alert("File size must be less than 576KB!");
+				} else {
+					var file = fileSelect[0];
+					var xhr = new XMLHttpRequest();
+
+					xhr.upload.addEventListener("progress", function (evt) {
+						if (evt.lengthComputable) {
+							var percentComplete = (evt.loaded / evt.total) * 100;
+							var x = Math.floor(percentComplete);
+
+							document.getElementById("progress").innerHTML = 'Progress: ' + x + '%';
+							document.getElementById("bar").style.width = x + '%';
+
+							// ****** After we send it all, lets ask the board if it went well. 
+							// Should use EventListener
+							if (x == 100) { 
+								getstatus();
+							}
+						} else {
+							// Filesize unknown
+						}
+					}, false);
+
+					xhr.addEventListener("error", function (evt) {
+						alert(xhr.status + " This Error!\n" + xhr.responseText);
+					}, false);
+
+					xhr.open('POST', "/update", true);
+					xhr.send(file);
+				}
+			}
+
+			function getstatus() {
+
+				var xhr = new XMLHttpRequest();
+				var requestURL = "/status";
+				xhr.open('POST', requestURL, true);
+
+				//Send the proper header information along with the request
+				xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+
+				xhr.onreadystatechange = function() { // Call a function when the state changes.
+					if (this.readyState === XMLHttpRequest.DONE && this.status === 200) {
+						var response = JSON.parse(xhr.responseText);
+
+						document.getElementById("latest_firmware").innerHTML = "Latest Firmware:  " + response.compile_date + " - " + response.compile_time
+							// If flashing was complete it will return a 1, else -1
+							// A return of 0 is just for information on the Latest Firmware request
+						if (response.status == 1) {
+							// Start the countdown timer
+							console.log("Status Request Returned ok");
+
+							// Set the delay time in seconds 
+							seconds = 10;
+
+							// Start the countdown timer
+							console.log("starting the timer");
+
+							// Since ESP32 reported ok, lets set a tier to reload this web page 
+							// Lets give it 10 seconds to reboot and re-connect to the router. 
+							theTimer = setInterval(function() {
+								startMyTimer();
+							}, 1000);
+
+						} else if (response.status == -1) {
+							document.getElementById("status").innerHTML = "!!! Upload Error !!!";
+						}
+					}
+				}
+
+				console.log("Requestiing Upgrade Status");
+
+				xhr.send('status');
+			}
+
+			function startMyTimer() {
+				console.log("timer" + seconds);
+
+				if (--seconds == 0) {
+					clearInterval(theTimer);
+
+					location.reload();
+				} else {
+					document.getElementById("status").innerHTML = "Upgrade Complete, Rebooting in " + seconds + " Seconds.";
+				}
+			}
+		</script>
+		
+		<style>
+			#file-input,input{
+				width:100%;
+				-webkit-box-sizing: border-box; /* Safari/Chrome, other WebKit */
+				-moz-box-sizing: border-box;    /* Firefox, other Gecko */
+				box-sizing: border-box;         /* Opera/IE 8+ */
+				height:44px;
+				border-radius:4px;
+				margin:10px auto;
+				font-size:15px
+			}
+			#file-input{
+				padding:0 10px;
+				border:1px solid #ddd;
+				line-height:44px;
+				text-align:left;
+				display:block;
+				cursor:pointer
+			}
+			body{
+				background:#3498db;
+				font-family:sans-serif;
+				font-size:14px;
+				color:#777
+			}
+			#bar,#prgbar{
+				background-color:#f1f1f1;
+				border-radius:10px
+			}
+			#bar{
+				background-color:#3498db;
+				width:0%;
+				height:10px
+			}
+			table{
+				background:#fff;
+				width:400px;
+				margin:75px auto;
+				padding:30px;
+				border-radius:5px;
+				text-align:center
+			}
+			.btn{
+				background:#3498db;
+				-webkit-appearance: none;
+				color:#fff;
+				cursor:pointer;
+				border:0
+			}
+
+		</style>
+    </body>
+</html>

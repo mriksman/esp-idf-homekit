@@ -10,7 +10,7 @@
 
 #include "esp_wifi_types.h"
 #include "esp_wifi.h"
-#include "esp_timer.h"
+//#include "esp_timer.h"
 
 #include "wifi.h"
 
@@ -62,6 +62,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
             ESP_LOGI(TAG, "station "MACSTR" leave, AID=%d",
                 MAC2STR(event->mac), event->aid);
         } else if (event_id == WIFI_EVENT_STA_START) {
+            // If no valid SSID was found in NVS, then this will fail
             esp_wifi_connect();
         } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
             #ifdef CONFIG_IDF_TARGET_ESP8266
@@ -140,7 +141,7 @@ void start_ap_prov() {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA)); //must be called before esp_wifi_set_config()
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &wifi_ap_config));
  
-    ESP_LOGI(TAG, "wifi_init_softap finished ssid:%s", wifi_ap_config.ap.ssid);
+    ESP_LOGI(TAG, "Started softAP ssid:%s", wifi_ap_config.ap.ssid);
 
 }
 
@@ -166,10 +167,17 @@ void wifi_init()
         tcpip_adapter_init();
     #endif
 
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(CUSTOM_WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
- 
+    // esp_event_handler_register is being deprecated
+    #ifdef CONFIG_IDF_TARGET_ESP32
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(CUSTOM_WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
+    #elif CONFIG_IDF_TARGET_ESP8266
+        ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_register(CUSTOM_WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+    #endif
+
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
@@ -178,7 +186,7 @@ void wifi_init()
 
     wifi_config_t wifi_cfg;
     if (esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_cfg) != ESP_OK) {
-        ESP_LOGW(TAG, "No config found for STA");
+ 
     } else if (strlen((const char*) wifi_cfg.sta.ssid)) {
         ESP_LOGI(TAG, "Found ssid %s",     (const char*) wifi_cfg.sta.ssid);
         ESP_LOGI(TAG, "Found password %s", (const char*) wifi_cfg.sta.password);
@@ -186,15 +194,10 @@ void wifi_init()
     }
 
     if (!provisioned) {
-        start_ap_prov();
-                
+        start_ap_prov();               
     } else  {
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
-        
-        ESP_LOGI(TAG, "wifi_init_sta finished");
-
     }
-    
     ESP_ERROR_CHECK(esp_wifi_start());
 
 }

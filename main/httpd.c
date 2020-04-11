@@ -7,6 +7,7 @@
 #include "cJSON.h"
 
 #include "wifi.h"
+#include "httpd.h"
 
 static const char *TAG = "myhttpd";
 
@@ -45,7 +46,7 @@ esp_err_t ap_json_handler(httpd_req_t *req)
         ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&ap_count, ap_info));
 
         ESP_LOGI(TAG, "Total APs scanned = %u", ap_count);
-        for (int i = 0; i < ap_count; i++) {
+        for (int i = 0; i < ap_count && i <= MAX_AP_COUNT; i++) {
             cJSON_AddItemToArray(root, fld = cJSON_CreateObject());
             cJSON_AddItemToObject(fld, "ssid", cJSON_CreateString((const char *)ap_info[i].ssid));
             cJSON_AddItemToObject(fld, "chan", cJSON_CreateNumber(ap_info[i].primary));
@@ -83,14 +84,22 @@ esp_err_t connect_json_handler(httpd_req_t *req)
 
     if (total_len >= SCRATCH_BUFSIZE) {
         /* Respond with 500 Internal Server Error */
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        #ifdef CONFIG_IDF_TARGET_ESP32
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        #elif CONFIG_IDF_TARGET_ESP8266
+            httpd_resp_send_500(req);
+        #endif
         return ESP_FAIL;
     }
     while (cur_len < total_len) {
         received = httpd_req_recv(req, buf + cur_len, total_len);
         if (received <= 0) {
             /* Respond with 500 Internal Server Error */
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post control value");
+            #ifdef CONFIG_IDF_TARGET_ESP32            
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post control value");
+            #elif CONFIG_IDF_TARGET_ESP8266
+                httpd_resp_send_500(req);
+            #endif
             return ESP_FAIL;
         }
         cur_len += received;
@@ -102,37 +111,18 @@ esp_err_t connect_json_handler(httpd_req_t *req)
     cJSON *pwd = cJSON_GetObjectItem(root, "password");
 
     ESP_LOGI(TAG, "SSID = %s, Password = %s", ssid->valuestring, pwd->valuestring);
- 
-
 
     wifi_config_t wifi_cfg;
-    if (esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_cfg) != ESP_OK) {
-        ESP_LOGW(TAG, "No config found for STA");
-    } else {
-        ESP_LOGW(TAG, "Config found for STA. Updating SSID");
-    }
+    esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_cfg);
 
     snprintf((char *)wifi_cfg.sta.ssid, 32, "%s", ssid->valuestring);
     snprintf((char *)wifi_cfg.sta.password, 32, "%s", pwd->valuestring);
 
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_cfg)); 
 
-    ESP_LOGI(TAG, "Disconnecting from current SSID");
-
-    esp_wifi_disconnect();
-/*
-    // ****** A queue system would be good for this... ******
-    if( xSemaphoreTake(g_wifi_mutex, 1000/portTICK_PERIOD_MS) == pdTRUE) {
-        esp_wifi_connect();
-        esp_event_post(CUSTOM_WIFI_EVENT, START_WIFI_CONNECT, NULL, sizeof(NULL), 100/portTICK_PERIOD_MS);
-        snprintf(resp, 8, "OK");
-    } else {
-        // As it is, a failed attempt will mean it will not attemot again leaving the connection
-        // in an failed state
-        snprintf(resp, 8, "Failed");
-    }
-*/
-
+    esp_wifi_disconnect();  
+    esp_wifi_connect();         // ignore mutex - we want this to take priority and immediately
+    
     snprintf(resp, 8, "OK");
     httpd_resp_send(req, resp, strlen(resp));
 
@@ -158,7 +148,7 @@ esp_err_t status_json_handler(httpd_req_t *req)
         esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
         esp_netif_get_ip_info(esp_netif, &ip_info)
         bool if_status = esp_netif_is_netif_up(esp_netif);
-   #elif CONFIG_IDF_TARGET_ESP8266
+    #elif CONFIG_IDF_TARGET_ESP8266
         tcpip_adapter_ip_info_t ip_info;
         ESP_ERROR_CHECK(tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info));
         bool if_status = tcpip_adapter_is_netif_up(TCPIP_ADAPTER_IF_STA);
@@ -183,10 +173,6 @@ esp_err_t status_json_handler(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
     httpd_resp_set_hdr(req, "Pragma", "no-cache");
     httpd_resp_send(req, out, strlen(out));      
-//    httpd_resp_send(req, "OK", 2);      
-
-//    ESP_LOGI(TAG, "%s", out); 
-//    ESP_LOGW(TAG, "HEAP %d",  heap_caps_get_free_size(MALLOC_CAP_8BIT));
 
     /* free all objects under root and root itself */
     cJSON_Delete(root);
@@ -204,11 +190,11 @@ esp_err_t status_json_handler(httpd_req_t *req)
 
 httpd_handle_t start_webserver(void)
 {
-
-
-
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+
+    // kick off any old socket connections to allow new connections
+    config.lru_purge_enable = true;
 
     // Start the httpd server
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);

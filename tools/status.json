@@ -1,0 +1,7 @@
+{
+	"ssid":	"Mike iPhone 11 Pro",
+	"ip":	"172.20.10.7",
+	"netmask":	"255.255.255.240",
+	"gw":	"172.20.10.1",
+	"if_status":	true
+}

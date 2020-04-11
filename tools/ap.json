@@ -1,0 +1,51 @@
+[{
+		"ssid":	"Mike iPhone 11 Pro",
+		"chan":	6,
+		"rssi":	-15,
+		"auth":	3
+	}, {
+		"ssid":	"Guest_Wifi",
+		"chan":	6,
+		"rssi":	-53,
+		"auth":	4
+	}, {
+		"ssid":	"VMD72AA32",
+		"chan":	6,
+		"rssi":	-53,
+		"auth":	4
+	}, {
+		"ssid":	"SKYD5CF2",
+		"chan":	1,
+		"rssi":	-69,
+		"auth":	3
+	}, {
+		"ssid":	"HP-Print-16-Color LaserJet Pro",
+		"chan":	6,
+		"rssi":	-70,
+		"auth":	0
+	}, {
+		"ssid":	"VM7916579",
+		"chan":	1,
+		"rssi":	-72,
+		"auth":	4
+	}, {
+		"ssid":	"Horizon Wi-Free",
+		"chan":	1,
+		"rssi":	-73,
+		"auth":	5
+	}, {
+		"ssid":	"VM22219D6",
+		"chan":	11,
+		"rssi":	-79,
+		"auth":	4
+	}, {
+		"ssid":	"UPC246734652",
+		"chan":	1,
+		"rssi":	-80,
+		"auth":	3
+	}, {
+		"ssid":	"Horizon Wi-Free",
+		"chan":	11,
+		"rssi":	-80,
+		"auth":	5
+	}]

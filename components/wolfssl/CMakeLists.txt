@@ -1,25 +1,25 @@
 set(wolfssl_VERSION "4.1.0")
 set(wolfssl_THIRDPARTY_ROOT "wolfssl-${wolfssl_VERSION}")
-
-file(GLOB WOLF_SRCS
-  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/*.c"
-  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/*.cpp"
-  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/memory.c"
-  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/*.i"
-  "${wolfssl_THIRDPARTY_ROOT}/src/*.cpp"
-  "${wolfssl_THIRDPARTY_ROOT}/src/*.c"
-  "${wolfssl_THIRDPARTY_ROOT}/src/*.s"
-)
-
-set(COMPONENT_SRCS
-  ${WOLF_SRCS}
-)
-
+ 
+set(COMPONENT_SRCDIRS "${wolfssl_THIRDPARTY_ROOT}/src/"
+                      "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/"
+                      "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/port/Espressif/"
+                      "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/port/atmel/"
+                      )
+  
 set(COMPONENT_SRCEXCLUDE
-  "${wolfssl_THIRDPARTY_ROOT}/src/bio.c"
   "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/aes.c"
-  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/aes_asm.s"
-
+  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/aes_asm.S"  
+  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/aes_gcm_asm.S"
+  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/chacha_asm.S"
+  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/fe_x25519_asm.S"
+  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/poly1305_asm.S"
+  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/sha256_asm.S"
+  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/sha512_asm.S"
+  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/sp_x86_64_asm.S"    
+  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/evp.c"
+  "${wolfssl_THIRDPARTY_ROOT}/wolfcrypt/src/misc.c"
+  "${wolfssl_THIRDPARTY_ROOT}/src/bio.c"
 )
 
 set(COMPONENT_ADD_INCLUDEDIRS
@@ -28,31 +28,33 @@ set(COMPONENT_ADD_INCLUDEDIRS
   "${wolfssl_THIRDPARTY_ROOT}"
 )
 
-set(COMPONENT_REQUIRES http-parser)
-set(COMPONENT_NAME "wolfssl")
+set(COMPONENT_REQUIRES lwip)
 
-
-register_component()
+idf_component_register(
+  SRC_DIRS ${COMPONENT_SRCDIRS} EXCLUDE_SRCS ${COMPONENT_SRCEXCLUDE}
+  INCLUDE_DIRS ${COMPONENT_ADD_INCLUDEDIRS}
+  REQUIRES ${COMPONENT_REQUIRES}
+)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} \
-  -DWOLFSSL_USER_SETTINGS \
-  -DWOLFCRYPT_HAVE_SRP \
-  -DWOLFSSL_SHA512 \
-  -DWOLFSSL_BASE64_ENCODE \
- 	-DNO_MD5 \
- 	-DNO_SHA \
- 	-DHAVE_HKDF \
- 	-DHAVE_CHACHA \
- 	-DHAVE_POLY1305 \
- 	-DHAVE_ED25519 \
- 	-DHAVE_CURVE25519 \
- 	-DNO_SESSION_CACHE \
-  -DUSE_WOLFSSL_MEMORY \
- 	-DRSA_LOW_MEM \
- 	-DGCM_SMALL \
- 	-DUSE_SLOW_SHA512 \
- 	-DWOLFCRYPT_ONLY \
- 	-DCURVE25519_SMALL \
- 	-DED25519_SMALL \
-  -DESP_IDF"
+  -DWOLFSSL_USER_SETTINGS"
 )
+
+if(CONFIG_HOMEKIT_SMALL)
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} \
+    -DCURVE25519_SMALL \
+    -DED25519_SMALL"
+  )
+endif()
+
+if(${IDF_TARGET} STREQUAL "esp8266")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} \
+    -DIDF_TARGET_ESP8266"
+  )
+elseif(${IDF_TARGET} STREQUAL "esp32")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} \
+    -DIDF_TARGET_ESP32"
+  )
+else()
+  message(FATAL_ERROR "user_settings.h only supports esp8266 and esp32 targets")
+endif()

@@ -4,4 +4,6 @@
 httpd_handle_t start_webserver(void);
 
 void stop_webserver(httpd_handle_t server);
+
+#define MAX_AP_COUNT 10
                             

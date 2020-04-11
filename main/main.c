@@ -2,6 +2,8 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"              // For EventGroupHandle_t
 
+#include "esp_event_base.h"
+
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -18,26 +20,23 @@
 #include <driver/gpio.h>
 
 
-
+// Included to show app_desc_t from partition
 #include "esp_app_format.h"
 #include "esp_ota_ops.h"
-#include "esp_log.h"
 #include "esp_image_format.h"
+
+#include "esp_log.h"
 static const char *TAG = "main";
-
-
-
+// *******************************************
 
 void on_wifi_ready();
-
-
 
 
 const int led_gpio = 2;
 bool led_on = false;
 
 void led_write(bool on) {
-    gpio_set_level(led_gpio, on ? 1 : 0);
+    gpio_set_level(led_gpio, on ? 0 : 1);
 }
 
 void led_init() {
@@ -119,6 +118,21 @@ void on_wifi_ready() {
 
 
 
+/* Event handler for Events */
+static void homekit_event_handler(void* arg, esp_event_base_t event_base,
+                                    int32_t event_id, void* event_data) {
+    if (event_base == WIFI_EVENT) {
+        if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+            ESP_LOGI(TAG, "WIFI_EVENT_STA_DISCONNECTED");
+        }
+    } else if (event_base == IP_EVENT) {
+        if (event_id == IP_EVENT_STA_GOT_IP) {
+            ESP_LOGI(TAG, "IP_EVENT_STA_GOT_IP");
+            on_wifi_ready();
+        }
+    } 
+
+}
 
 
 void app_main(void)
@@ -127,9 +141,10 @@ void app_main(void)
     esp_log_level_set("httpd", ESP_LOG_INFO); 
     esp_log_level_set("httpd_uri", ESP_LOG_INFO);    
     esp_log_level_set("httpd_txrx", ESP_LOG_INFO);     
-    esp_log_level_set("httpd_sess", ESP_LOG_INFO);
+//    esp_log_level_set("httpd_sess", ESP_LOG_INFO);
     esp_log_level_set("httpd_parse", ESP_LOG_INFO);  
     esp_log_level_set("vfs", ESP_LOG_INFO);     
+    esp_log_level_set("esp_timer", ESP_LOG_INFO);     
  
     // Initialize NVS.
     #ifdef CONFIG_IDF_TARGET_ESP32
@@ -140,10 +155,13 @@ void app_main(void)
         }
         ESP_ERROR_CHECK(err);
     #elif CONFIG_IDF_TARGET_ESP8266
-      //  nvs_flash_init() is called in startup.c with assert == ESP_OK. So if you change 
-      //  partition size, this will fail. Comment the assert out and then nvs_flash_erase()
+        // nvs_flash_init() is called in startup.c with assert == ESP_OK. So if you change 
+        //  partition size, this will fail. Comment the assert out and then nvs_flash_erase()
+//        
     #endif
 
+//    ESP_ERROR_CHECK(nvs_flash_erase());
+//    homekit_server_reset();
 
 
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -153,29 +171,24 @@ void app_main(void)
     led_init();
 
     start_webserver();
+
+
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &homekit_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &homekit_event_handler, NULL));
  
-
-
-
     const esp_partition_t *next = esp_ota_get_running_partition();
     esp_app_desc_t app_desc;
     esp_ota_get_partition_description(next, &app_desc);
-    ESP_LOGI(TAG, "Magic word 0x%8x, App version %s, Proj Name %s, Time %s",
-             app_desc.magic_word, app_desc.version, app_desc.project_name, app_desc.time);
-
-    ESP_LOGI(TAG, "esp_image_header_t %d esp_image_segment_header_t %d esp_app_desc_t %d", sizeof(esp_image_header_t), sizeof(esp_image_segment_header_t), sizeof(esp_app_desc_t));
-
     const esp_app_desc_t *app_desc1;
     app_desc1 = esp_ota_get_app_description();
-    ESP_LOGI(TAG, "Magic word 0x%8x, App version %s, Proj Name %s, Time %s",
-             app_desc1->magic_word, app_desc1->version, app_desc1->project_name, app_desc1->time);
 
-
-    esp_image_header_t image_header;
-    esp_partition_read(next, 0, &image_header, sizeof(esp_image_header_t));
-    ESP_LOGI(TAG, "Magic word 0x%2x, Entry 0x%4x, SPI size %d",
-             image_header.magic, image_header.entry_addr - 0x40201000, image_header.spi_size);
-
+    ESP_LOGI(TAG, "\r\n\
+                                Magic word   App version    Proj Name     Time  \r\n\
+ota_get_partition_description   0x%8x  %s   %s   %s\r\n\
+ota_get_app_description         0x%8x  %s   %s   %s",
+             app_desc.magic_word, app_desc.version, app_desc.project_name, app_desc.time,
+             app_desc1->magic_word, app_desc1->version, app_desc1->project_name, app_desc1->time
+            );
 
 
 }

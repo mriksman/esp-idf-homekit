@@ -20,6 +20,26 @@ config HOMEKIT_SMALL
         Configures components to use smaller (but slower) implementations. Helps
         decrease firmware size ~70KB at cost of increasing pair verify time
 
+config HOMEKIT_OVERCLOCK
+    bool "Allow Overclocking for Pair/Verify"
+    default y
+    help
+        Set to 1 to enable the ability to use overclock on some functions (It will reduce times by half).
+
+config HOMEKIT_OVERCLOCK_PAIR_SETUP 
+    bool "Overclock Pair-Setup Function"
+    default y
+    depends on HOMEKIT_OVERCLOCK
+    help
+        Set to 1 to enable overclock on initial pair-setup function.
+
+config HOMEKIT_OVERCLOCK_PAIR_VERIFY  
+    bool "Overclock Pair-Verify Function"
+    default y
+    depends on HOMEKIT_OVERCLOCK
+    help
+        Set to 1 to enable overclock on pair-verify function.
+
 config HOMEKIT_DEBUG
     bool "Debug output"
     default n

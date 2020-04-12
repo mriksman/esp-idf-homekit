@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     button_active_low = 0,
     button_active_high = 1,
@@ -31,3 +35,7 @@ int button_create(uint8_t gpio_num,
                   void* context);
 
 void button_destroy(uint8_t gpio_num);
+
+#ifdef __cplusplus
+}
+#endif 

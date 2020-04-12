@@ -1,10 +1,9 @@
-#include <string.h>
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/event_groups.h"              // For EventGroupHandle_t
+//#include "freertos/event_groups.h"            // For EventGroupHandle_t
 
-#include "esp_log.h"                            // For ESP_LOGI
+#include <string.h>
+
 #include "esp_event.h"                          // For esp_event_base_t
 #include "esp_err.h"
 
@@ -14,7 +13,7 @@
 
 #include "wifi.h"
 
-
+#include "esp_log.h"                            // For ESP_LOGI
 static const char *TAG = "mywifi";
 
 #define MAXIMUM_RETRY               4
@@ -100,6 +99,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 
             // Got IP - do not need softAP anymore
             // ********* Perform this after a timer *********
+            // HTTP Redirect to new IP?
+            // Shutdown HTTP Server?
             //ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
 
             // Connect successful/finished, give back Mutex.

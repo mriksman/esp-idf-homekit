@@ -1,6 +1,5 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_log.h"
 
 #include "esp_http_server.h"
 #include "esp_wifi.h"
@@ -9,6 +8,7 @@
 #include "wifi.h"
 #include "httpd.h"
 
+#include "esp_log.h"
 static const char *TAG = "myhttpd";
 
 #define SCRATCH_BUFSIZE 1024
@@ -192,7 +192,7 @@ httpd_handle_t start_webserver(void)
 {
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-
+    config.max_open_sockets = 5;
     // kick off any old socket connections to allow new connections
     config.lru_purge_enable = true;
 

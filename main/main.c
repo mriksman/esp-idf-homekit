@@ -19,17 +19,22 @@
 #include <homekit/characteristics.h>
 #include <driver/gpio.h>
 
+#include "button.h"
 
-// Included to show app_desc_t from partition
+// *** Included to show app_desc_t from partition ***
 #include "esp_app_format.h"
 #include "esp_ota_ops.h"
 #include "esp_image_format.h"
 
 #include "esp_log.h"
 static const char *TAG = "main";
-// *******************************************
+// **************************************************
 
 void on_wifi_ready();
+
+#define BUTTON1_GPIO 0
+
+
 
 
 const int led_gpio = 2;
@@ -116,8 +121,6 @@ void on_wifi_ready() {
 }
 
 
-
-
 /* Event handler for Events */
 static void homekit_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data) {
@@ -128,10 +131,31 @@ static void homekit_event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT) {
         if (event_id == IP_EVENT_STA_GOT_IP) {
             ESP_LOGI(TAG, "IP_EVENT_STA_GOT_IP");
-            on_wifi_ready();
+            //on_wifi_ready();
         }
     } 
 
+}
+
+
+// Multiple gang switches
+uint8_t button_idx1 = 1;
+uint8_t button_idx2 = 2;
+
+void button_callback(button_event_t event, void* context) {
+    int button_idx = *((uint8_t*) context);
+
+    switch (event) {
+        case button_event_down:
+            // Can start timers here to determine 'long press' (if required)
+            ESP_LOGI(TAG, "button %d down", button_idx);
+            break;
+        case button_event_up:
+            ESP_LOGI(TAG, "button %d up", button_idx);
+            break;
+        default:
+            ESP_LOGI(TAG, "button %d pressed %d times", button_idx, event);
+    }
 }
 
 
@@ -176,6 +200,15 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &homekit_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &homekit_event_handler, NULL));
  
+
+    button_config_t button_config = BUTTON_CONFIG(
+        button_active_low,
+    );
+
+    button_create(BUTTON1_GPIO, button_config, button_callback, &button_idx1);
+
+
+
     const esp_partition_t *next = esp_ota_get_running_partition();
     esp_app_desc_t app_desc;
     esp_ota_get_partition_description(next, &app_desc);

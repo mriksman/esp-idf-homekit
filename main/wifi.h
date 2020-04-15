@@ -4,17 +4,10 @@
 extern "C" {
 #endif
 
-#include "esp_event.h"                          // For esp_event_base_t
+SemaphoreHandle_t* get_wifi_mutex();
 
 void wifi_init(void);
-
-// Declare an event base
-ESP_EVENT_DECLARE_BASE(CUSTOM_WIFI_EVENT);
-
-enum {                                       // declaration of the specific events 
-    START_WIFI_SCAN, 
-    START_WIFI_CONNECT
-};
+void start_ap_prov();
 
 #ifdef __cplusplus
 }

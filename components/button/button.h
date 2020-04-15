@@ -13,11 +13,13 @@ typedef struct {
     button_active_level_t active_level;
     // times in milliseconds
     uint16_t repeat_press_timeout;
+    uint16_t long_press_time;
 } button_config_t;
 
 typedef enum {
-    button_event_down = -2,
-    button_event_up = -1,
+    button_event_down = -3,
+    button_event_up = -2,
+    button_event_long_press = -1,
 } button_event_t;
 
 typedef void (*button_callback_fn)(button_event_t event, void* context);
@@ -25,7 +27,7 @@ typedef void (*button_callback_fn)(button_event_t event, void* context);
 #define BUTTON_CONFIG(level, ...) \
   (button_config_t) { \
     .active_level = level, \
-    .repeat_press_timeout = 500, \
+    .repeat_press_timeout = 300, \
     __VA_ARGS__ \
   }
 

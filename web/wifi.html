@@ -7,27 +7,57 @@
 		<title>ESP</title>
 	</head>
 	<body>
-	<div id="app">
+		<div id="app">
 			<div id="wifi" class="slider">
 				<h1>Wi-Fi</h1>
 				<div id="wifi-status" class="slider closed">
-					<div class="section_border">
-						<h2>Connected to:</h2>
-						<div class="ape"><div class="ssid_text"></div></div>
+					<div class="section_header">
+						<h2 class="text">Connected to:</h2>
+					</div>
+					<div class="section_body">
+						<div class="ape"><div class="ssid_text"></div></div>	
 					</div>
 				</div>
-				<div class="section_border">
-					<h2>Choose a network...</h2>
-					<section id="wifi-list">
-					<ul>
-					</ul>
-					</section>
+				
+				<div id="settings" >
+					<div class="section_header">
+						<h2 class="text">Settings</h2>
+						<h2 class="refresh">v</h2>
+					</div>
+					<div class="section_body slider ">
+
+						<input class="inp-cbx" id="cbx" type="checkbox" style="display: none;"/>
+<label class="cbx" for="cbx"><span>
+    <svg width="12px" height="10px" viewbox="0 0 12 10">
+      <polyline points="1.5 6 4.5 9 10.5 1"></polyline>
+    </svg></span><span>CodePenChallenge</span></label>
+						
+						
+					</div>
 				</div>
+				
+				<div id="wifi-list">
+					<div class="section_header">
+						<h2 class="text">Choose a network...</h2>
+						<h2 class="refresh">⟲</h2>
+					</div>
+					<div class="section_body">
+						<ul>
+						</ul>
+					</div>
+				</div>
+				
+				
+				
+				
+				
 			</div>
 			<div id="connect" class="slider closed">
 				<h1>Enter Password</h1>
-				<div class="section_border">
-					<h2>Password for <span></span></h2>
+				<div class="section_header">
+					<h2 class="text">Password for <span></span></h2>
+				</div>
+				<div class="section_body">
 					<input id="pwd" class="text_input" type="password" placeholder="Password" value="">
 					<div class="buttons">
 						<input class="cancel" type="button" value="Cancel"/>
@@ -37,21 +67,22 @@
 			</div>
 			<div id="connect-wait" class="slider closed">
 				<h1>Please wait...</h1>
-				<div class="section_border">
-					<h2>Connecting to <span></span></h2>
-					<section>
-						<div id="loading">
-							<div class="spinner"><div class="double-bounce1"></div><div class="double-bounce2"></div></div>
-							<p>Please wait while the device connects to the AP.</p>
-						</div>
-						<div id="connect-success">
-							<h3 class="gr">Success!</h3>
-						</div>
-						<div id="connect-fail">
-							<h3 class="rd">Connection Failed</h3>
-							<p>Please double-check wifi password if any and make sure the access point has good signal.</p>
-						</div>
-					</section>
+				<div class="section_header">
+					<h2 class="text">Connecting to <span></span></h2>
+				</div>
+				<div class="section_body">
+					<div id="loading" style="padding-top: 30px">
+						<div class="spinner"><div class="double-bounce1"></div><div class="double-bounce2"></div></div>
+						<p>Please wait while the device connects to the AP.</p>
+					</div>
+					<div id="connect-success">
+						<h3 class="gr">Success!</h3>
+						<p>The Soft AP will be disabled when the last client has disconnected from the ESP.</p>
+					</div>
+					<div id="connect-fail">
+						<h3 class="rd">Connection Failed</h3>
+						<p></p>
+					</div>
 					<div class="buttons">
 						<input class="ok ctr" type="button" value="OK" />
 					</div>
@@ -59,13 +90,13 @@
 			</div>
 			<div id="connect-details" class="slider closed">
 				<h1></h1>
-				<div class="section_border">
-					<h2>Connection Details</h2>
-					<section>
-						<div class="ape">IP Address:<div id="ip" class="fr"></div></div>
-						<div class="ape">Subnet Mask:<div id="netmask" class="fr"></div></div>
-						<div class="ape">Default Gateway:<div id="gw" class="fr"></div></div>
-					</section>
+				<div class="section_header">
+					<h2 class="text">Connection Details</h2>
+				</div>
+				<div class="section_body">
+					<div class="ape">IP Address:<div id="ip" class="fr"></div></div>
+					<div class="ape">Subnet Mask:<div id="netmask" class="fr"></div></div>
+					<div class="ape">Default Gateway:<div id="gw" class="fr"></div></div>
 					<div class="buttons">
 						<input class="ok ctr" type="button" value="OK" />
 					</div>
@@ -76,16 +107,16 @@
 		<script type="text/javascript">
 			var selectedSSID = "";
 			
-			const refreshAPInterval = 13000; 
+//			const refreshAPInterval = 13000; 
 			const checkStatusInterval = 7000;
-			var refreshAPTimer;
+//			var refreshAPTimer;
 			var checkStatusTimer;
 			
 			var counter = 0;
 			var connectAttempt = false;
 			
 			checkStatusTimer = setInterval(checkStatus, checkStatusInterval);
-			refreshAPTimer = setInterval(refreshAP, refreshAPInterval);
+//			refreshAPTimer = setInterval(refreshAP, refreshAPInterval);
 			refreshAP();
 			
 			
@@ -124,17 +155,22 @@
 				})
 			});	
 
+			document.querySelector('#wifi-list .section_header .refresh').addEventListener('click', (e) => { 
+				refreshAP(); 
+			});		
+			
 			function refreshAP(){
 				fetch("/ap.json", {
 					cache: 'no-store',
 					headers: {
 					  'Content-Type': 'application/json'
 					},
-				})  
-				.then((response) => {
+				}).then((response) => {
+					if (!response.ok) {
+						throw Error(response.statusText);
+					}
 					return response.json();
-				})
-				.then((data) => {
+				}).then((data) => {
 					var ul = document.querySelector("#wifi ul");
 					ul.innerHTML = "";
 					
@@ -162,6 +198,8 @@
 						
 						ul.appendChild(li);
 					});
+				}).catch((error) =>  {
+					console.log(error);
 				});  				
 			}
 
@@ -171,11 +209,12 @@
 					headers: {
 					  'Content-Type': 'application/json'
 					},
-				})  
-				.then((response) => {
+				}).then((response) =>  {
+					if (!response.ok) {
+						throw Error(response.statusText);
+					}
 					return response.json();
-				})
-				.then((data) => {
+				}).then((data) => {
 					document.querySelector("#wifi-status .ssid_text").textContent = data["ssid"];
 					document.querySelector("#connect-details h1").textContent = data["ssid"];
 					document.querySelector("#ip").textContent = data["ip"];
@@ -187,7 +226,6 @@
 					} else {
 						document.querySelector("#wifi-status").classList.add("closed");					
 					}
-
 					if (connectAttempt === true) {
 						if (data["if_status"] === true) {
 							document.querySelector("#connect-wait .ok").disabled = false;
@@ -195,11 +233,13 @@
 							document.querySelector("#loading" ).style.display = "none";
 							document.querySelector("#connect-success" ).style.display = "block";
 							document.querySelector("#connect-fail" ).style.display = "none";
-							
+																		
 							connectAttempt = false;
 						} else {
 							if (counter > 2) {
 								document.querySelector("#connect-wait .ok").disabled = false;
+								
+								document.querySelector("#connect-fail p").textContent = "Please double-check wifi password if any and make sure the access point has good signal."
 								
 								document.querySelector("#loading" ).style.display = "none";
 								document.querySelector("#connect-success" ).style.display = "none";
@@ -211,11 +251,13 @@
 							}
 						}
 					}
-				}); 
+				}).catch((error) =>  {
+					console.log(error);
+				});  
 			}
 
 			function performConnect(){
-				clearInterval(refreshAPTimer);
+//				clearInterval(refreshAPTimer);
 				clearInterval(checkStatusTimer);
 		
 				document.querySelector("#loading" ).style.display = "block";
@@ -227,7 +269,7 @@
 				document.querySelector("#connect-wait h2 span").textContent = selectedSSID;
 				document.querySelector("#connect").classList.add("closed");
 				document.querySelector("#connect-wait").classList.remove("closed");
-					
+										
 				counter = 0;
 				connectAttempt = true;
 				
@@ -239,12 +281,28 @@
 					},
 					body: JSON.stringify({ 
 						'ssid': selectedSSID, 
-						'password': ""
+						'password': document.querySelector("#pwd").value
 					})
-				}) 
+				}).then((response) =>  {
+					if (!response.ok) {
+						throw Error(response.statusText);
+					}
+					checkStatusTimer = setInterval(checkStatus, checkStatusInterval);
+//					refreshAPTimer = setInterval(refreshAP, refreshAPInterval);	
+				}).catch((error) =>  {
+					console.log(error);
+					
+					// Failed to get a response - probably changing AP and IP has changed
+					document.querySelector("#connect-wait .ok").disabled = false;
+					
+					document.querySelector("#connect-fail p").textContent = "No response. You have most likely connected to the ESP via the router assigned address, and not directly to the ESP's Soft AP IP. The IP you have connected to is no longer valid."
 
-				checkStatusTimer = setInterval(checkStatus, checkStatusInterval);
-				refreshAPTimer = setInterval(refreshAP, refreshAPInterval);	
+					document.querySelector("#loading" ).style.display = "none";
+					document.querySelector("#connect-success" ).style.display = "none";
+					document.querySelector("#connect-fail" ).style.display = "block";
+					
+					connectAttempt = false;
+				});
 			}
 		</script>
 		<style>
@@ -272,11 +330,6 @@
 					padding:15px;
 				}
 			}			
-			.section_border {
-				margin-top:10px;
-				border: 2px solid #3498db;
-				border-radius:10px;
-			}		
 			h1 {
 				display: block;
 				text-align: center;
@@ -285,20 +338,37 @@
 				font-size: 1.4em
 			}
 			h2 {
-				margin: 0;
 				text-align: center;
-				background-color:#3498db;
-				border-radius: 5px 5px 0px 0px;
-				padding: 10px;
 				text-transform: uppercase;
+				margin: 10px;
 				color: #fff;
 				font-size: 1.0em
+			}
+			h2.text {
+				width: 100%;
+			}
+			h2.refresh {
+				margin-left: auto;
+			}
+			h2.refresh:hover {
+				cursor: pointer;
 			}
 			h3 {
 				margin: 0;
 				text-align: center;
 				padding: 20px 0px 20px 0px;
+			}	
+			.section_header {
+				display: flex;
+				background-color:#3498db;
+				border-radius: 10px 10px 0 0;
+				margin-top:10px;
 			}
+			.section_body {
+				border: 2px solid #3498db;
+				border-top: none;
+				border-radius: 0 0 10px 10px;
+			}			
 			p {
 				padding: 10px;
 				text-align: center;
@@ -331,6 +401,8 @@
 			.ape:hover {
 				cursor: pointer;
 			}
+
+			
 			.ssid_text {
 				width: 100%;
 				text-align: center;
@@ -408,13 +480,89 @@
 			}
 
 
+.cbx {
+  margin: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: pointer;
+}
+.cbx span {
+  display: inline-block;
+  vertical-align: middle;
+  transform: translate3d(0, 0, 0);
+}
+.cbx span:first-child {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  transform: scale(1);
+  vertical-align: middle;
+  border: 1px solid #3498db;
+  transition: all 0.2s ease;
+}
+.cbx span:first-child svg {
+  position: absolute;
+  top: 3px;
+  left: 2px;
+  fill: none;
+  stroke: #FFFFFF;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 16px;
+  stroke-dashoffset: 16px;
+  transition: all 0.3s ease;
+  transition-delay: 0.1s;
+  transform: translate3d(0, 0, 0);
+}
+.cbx span:first-child:before {
+  content: "";
+  width: 100%;
+  height: 100%;
+  background: #3498db;
+  display: block;
+  transform: scale(0);
+  opacity: 1;
+  border-radius: 50%;
+}
+.cbx span:last-child {
+  padding-left: 8px;
+}
+.cbx:hover span:first-child {
+  border-color: #3498db;
+}
+
+.inp-cbx:checked + .cbx span:first-child {
+  background: #3498db;
+  border-color: #3498db;
+  animation: wave 0.4s ease;
+}
+.inp-cbx:checked + .cbx span:first-child svg {
+  stroke-dashoffset: 0;
+}
+.inp-cbx:checked + .cbx span:first-child:before {
+  transform: scale(3.5);
+  opacity: 0;
+  transition: all 0.6s ease;
+}
+
+@keyframes wave {
+  50% {
+    transform: scale(0.9);
+  }
+}
+
+
+
+
 			/* SpinKit is licensed under the MIT License. Copyright (c) 2015 Tobias Ahlin */
 
 			.spinner {
 				width: 40px;
 				height: 40px;
 				position: relative;
-				margin: 100px auto;
+				margin: 0 auto;
 			}
 			.double-bounce1,
 			.double-bounce2 {

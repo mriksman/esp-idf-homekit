@@ -13,7 +13,6 @@ static const char *TAG = "myhttpd";
 
 #define SCRATCH_BUFSIZE 1024
 
-extern SemaphoreHandle_t g_wifi_mutex;
 
 
 esp_err_t root_handler(httpd_req_t *req)
@@ -35,10 +34,9 @@ esp_err_t ap_json_handler(httpd_req_t *req)
 
     uint16_t ap_count = 0;
 
-    if( xSemaphoreTake(g_wifi_mutex, 500/portTICK_PERIOD_MS) == pdTRUE) {
+    if( xSemaphoreTake(*(get_wifi_mutex()), 500/portTICK_PERIOD_MS) == pdTRUE) {
         esp_wifi_scan_start(NULL, true);
-        esp_event_post(CUSTOM_WIFI_EVENT, START_WIFI_SCAN, NULL, sizeof(NULL), 100/portTICK_PERIOD_MS);
-        xSemaphoreGive(g_wifi_mutex);       // only if wifi_scan_start is blocking, otherwise, do it in SCAN_DONE event
+        xSemaphoreGive(*(get_wifi_mutex()));       // only if wifi_scan_start is blocking, otherwise, do it in SCAN_DONE event
 
         ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
 
@@ -180,11 +178,6 @@ esp_err_t status_json_handler(httpd_req_t *req)
 
     return ESP_OK;
 }
-
-
-
-
-
 
 
 

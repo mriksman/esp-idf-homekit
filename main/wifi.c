@@ -1,5 +1,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <freertos/timers.h>
 //#include "freertos/event_groups.h"            // For EventGroupHandle_t
 
 #include <string.h>
@@ -12,6 +13,7 @@
 //#include "esp_timer.h"
 
 #include "wifi.h"
+#include "httpd.h"
 
 #include "esp_log.h"                            // For ESP_LOGI
 static const char *TAG = "mywifi";
@@ -20,14 +22,18 @@ static const char *TAG = "mywifi";
 static int s_retry_num = 0;
 
 //static esp_timer_handle_t s_wifi_reconnect_timer;
-SemaphoreHandle_t g_wifi_mutex = NULL;
+static SemaphoreHandle_t g_wifi_mutex = NULL;
+static TaskHandle_t retry_connect_task_handle = NULL;
 
-static TaskHandle_t retry_connect_task_handle;
+
 
 void start_ap_prov();
+void stop_ap_prov();
 
-/* Event source periodic timer related definitions */
-ESP_EVENT_DEFINE_BASE(CUSTOM_WIFI_EVENT);
+SemaphoreHandle_t* get_wifi_mutex() {
+    return &g_wifi_mutex;
+}
+
 
 /* Helper function to check for Mutex before issuing a connect command */
 static void _wifi_connect(void* arg) {
@@ -52,17 +58,32 @@ static void retry_connect_task(void * arg)
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT) {
-        if (event_id == WIFI_EVENT_AP_STACONNECTED) {
-            wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*) event_data;
-            ESP_LOGI(TAG, "station "MACSTR" join, AID=%d",
-                MAC2STR(event->mac), event->aid);
-        } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
-            wifi_event_ap_stadisconnected_t* event = (wifi_event_ap_stadisconnected_t*) event_data;
-            ESP_LOGI(TAG, "station "MACSTR" leave, AID=%d",
-                MAC2STR(event->mac), event->aid);
+        if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+            wifi_sta_list_t connected_clients;
+            esp_wifi_ap_get_sta_list(&connected_clients);
+
+    ESP_LOGI(TAG, "num stations left %d", connected_clients.num);
+
+            #ifdef CONFIG_IDF_TARGET_ESP32
+                esp_netif_ip_info_t ip_info;
+                esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+                esp_netif_get_ip_info(esp_netif, &ip_info)
+                bool if_status = esp_netif_is_netif_up(esp_netif);
+            #elif CONFIG_IDF_TARGET_ESP8266
+                tcpip_adapter_ip_info_t ip_info;
+                ESP_ERROR_CHECK(tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info));
+                bool if_status = tcpip_adapter_is_netif_up(TCPIP_ADAPTER_IF_STA);
+            #endif
+
+            if (if_status && connected_clients.num == 0) {
+                ESP_LOGI(TAG, "Last client disconnected from AP and ESP is connected to STA. Shutting down Soft AP");
+                stop_ap_prov();
+            }
+
         } else if (event_id == WIFI_EVENT_STA_START) {
             // If no valid SSID was found in NVS, then this will fail
             esp_wifi_connect();
+
         } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
             #ifdef CONFIG_IDF_TARGET_ESP8266
             // ESP8266 RTOS SDK will continually retry every 2 seconds. To override, 
@@ -93,56 +114,67 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         }
     } else if (event_base == IP_EVENT) {
         if (event_id == IP_EVENT_STA_GOT_IP) {
-            ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-            ESP_LOGI(TAG, "got ip:" IPSTR "\n", IP2STR(&event->ip_info.ip));
             s_retry_num = 0;
-
-            // Got IP - do not need softAP anymore
-            // ********* Perform this after a timer *********
-            // HTTP Redirect to new IP?
-            // Shutdown HTTP Server?
-            //ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
 
             // Connect successful/finished, give back Mutex.
             xSemaphoreGive(g_wifi_mutex);
+
             // Stop periodic connection retry attempts
-            //esp_timer_stop(s_wifi_reconnect_timer);
             if (retry_connect_task_handle != NULL) {
                 vTaskDelete(retry_connect_task_handle);
                 retry_connect_task_handle = NULL;
             }
+
+            wifi_mode_t wifi_mode;
+            esp_wifi_get_mode(&wifi_mode);
+            wifi_sta_list_t connected_clients;
+            esp_wifi_ap_get_sta_list(&connected_clients);
+            if (wifi_mode == WIFI_MODE_APSTA && connected_clients.num == 0) {
+                ESP_LOGI(TAG, "Got an IP from STA, and no clients connected to Soft AP");
+                stop_ap_prov();
+            }
         }
     } 
-  
-    else if (event_base == CUSTOM_WIFI_EVENT) {
-        if (event_id == START_WIFI_SCAN) {
-            ESP_LOGI(TAG, "Wi-Fi Scan Started");
-            ESP_LOGW(TAG, "HEAP %d",  heap_caps_get_free_size(MALLOC_CAP_8BIT));
-        } else if (event_id == START_WIFI_SCAN) {
-            ESP_LOGI(TAG, "Wi-Fi Connect (from httpd) Started");
-            ESP_LOGW(TAG, "HEAP %d",  heap_caps_get_free_size(MALLOC_CAP_8BIT));
-        }
-    }
-
-
 }
 
 
+httpd_handle_t server = NULL;
+
 void start_ap_prov() {
-    wifi_config_t wifi_ap_config = {
-        .ap = {
-            .authmode = WIFI_AUTH_OPEN,
-            .max_connection = 4,
-        },
-    };
-    uint8_t mac;
-    esp_read_mac(&mac, 1);
-    snprintf((char *)wifi_ap_config.ap.ssid, 11, "esp_%02x%02x%02x", (&mac)[3], (&mac)[4], (&mac)[5]);
-     
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA)); //must be called before esp_wifi_set_config()
-    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &wifi_ap_config));
- 
-    ESP_LOGI(TAG, "Started softAP ssid:%s", wifi_ap_config.ap.ssid);
+    wifi_config_t wifi_cfg;
+    ESP_ERROR_CHECK(esp_wifi_get_config(ESP_IF_WIFI_AP, &wifi_cfg));
+
+    if ( strncmp((const char*) wifi_cfg.ap.ssid, "esp_", 4) == 0 ) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA)); 
+    } else {
+        wifi_config_t wifi_ap_config = {
+            .ap = {
+                .authmode = WIFI_AUTH_OPEN,
+                .max_connection = 4,
+            },
+        };
+        uint8_t mac;
+        esp_read_mac(&mac, 1);
+        snprintf((char *)wifi_ap_config.ap.ssid, 11, "esp_%02x%02x%02x", (&mac)[3], (&mac)[4], (&mac)[5]);
+
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));                        //must be called before esp_wifi_set_config()
+        ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &wifi_ap_config));
+
+        ESP_LOGW(TAG, "No previous SSID found. Set to ssid %s  ", (const char*) wifi_ap_config.ap.ssid);
+    }
+
+    server = start_webserver();
+        
+    ESP_LOGI(TAG, "Started softAP and HTTPD Service");
+
+}
+
+void stop_ap_prov() {
+    // Shutdown soft AP
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    stop_webserver(server);
+
+    ESP_LOGI(TAG, "Stopped softAP and HTTPD Service");
 
 }
 
@@ -170,13 +202,15 @@ void wifi_init()
 
     // esp_event_handler_register is being deprecated
     #ifdef CONFIG_IDF_TARGET_ESP32
-        ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
-        ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
-        ESP_ERROR_CHECK(esp_event_handler_instance_register(CUSTOM_WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, wifi_event_handler, NULL, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_START, wifi_event_handler, NULL, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_event_handler, NULL, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL, NULL));
     #elif CONFIG_IDF_TARGET_ESP8266
-        ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
-        ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
-        ESP_ERROR_CHECK(esp_event_handler_register(CUSTOM_WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, wifi_event_handler, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, wifi_event_handler, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_event_handler, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL));
     #endif
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -201,4 +235,5 @@ void wifi_init()
     }
     ESP_ERROR_CHECK(esp_wifi_start());
 
+    esp_wifi_set_ps(WIFI_PS_NONE);
 }

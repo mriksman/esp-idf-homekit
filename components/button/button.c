@@ -22,6 +22,7 @@ typedef struct _button {
 
     uint8_t press_count;
     TimerHandle_t repeat_press_timeout_timer;
+    TimerHandle_t long_press_timer;
 
     struct _button *next;
 } button_t;
@@ -37,13 +38,28 @@ static void button_toggle_callback(button_t *button) {
         // pressed
         button->press_count++;
         xTimerStart(button->repeat_press_timeout_timer, 1);
+        if (button->config.long_press_time && button->press_count == 1) {
+            xTimerStart(button->long_press_timer, 1);
+        }
     } else {
         // released
+        if (button->long_press_timer
+                && xTimerIsTimerActive(button->long_press_timer)) {
+            xTimerStop(button->long_press_timer, 1);
+        }
         if (button->repeat_press_timeout_timer
                     && !xTimerIsTimerActive(button->repeat_press_timeout_timer)) {
             button->callback(button_event_up, button->context);
         }
     }
+}
+
+
+static void button_long_press_timer_callback(TimerHandle_t timer) {
+    button_t *button = (button_t*) pvTimerGetTimerID(timer);
+
+    button->callback(button_event_long_press, button->context);
+    button->press_count = 0;
 }
 
 static void button_repeat_press_timeout_timer_callback(TimerHandle_t timer) {
@@ -91,7 +107,10 @@ static void button_free(button_t *button) {
         xTimerStop(button->repeat_press_timeout_timer, 1);
         xTimerDelete(button->repeat_press_timeout_timer, 1);
     }
-
+   if (button->repeat_press_timeout_timer) {
+        xTimerStop(button->repeat_press_timeout_timer, 1);
+        xTimerDelete(button->repeat_press_timeout_timer, 1);
+    }
     free(button);
 }
 
@@ -147,6 +166,17 @@ int button_create(const uint8_t gpio_num,
     if (!button->repeat_press_timeout_timer) {
         button_free(button);
         return -3;              // cannot create repeat press timeout timer
+    }
+
+    if (config.long_press_time) {
+        button->long_press_timer = xTimerCreate(
+            "Button Long Press Timer", pdMS_TO_TICKS(config.long_press_time),
+            pdFALSE, button, button_long_press_timer_callback
+        );
+        if (!button->long_press_timer) {
+            button_free(button);
+            return -4;          // cannot create long press timer
+        }
     }
 
     gpio_set_direction(button->gpio_num, GPIO_MODE_INPUT);

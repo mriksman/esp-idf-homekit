@@ -67,7 +67,7 @@ led_status_t *led_status_init(uint8_t gpio, uint8_t active_level) {
     // set the timer, with an arbitrary time - but don't start
 //    sdk_os_timer_setfn(&status->timer, (void(*)(void*))led_status_tick, status);
     status->timer = xTimerCreate(
-        "Toggle timer", 10, pdFALSE, status, led_status_tick_callback
+        "Toggle timer", 100, pdFALSE, status, led_status_tick_callback
     );
 
     gpio_set_direction(status->gpio, GPIO_MODE_OUTPUT);

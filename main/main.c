@@ -25,6 +25,9 @@
 #endif
 ESP_EVENT_DEFINE_BASE(HOMEKIT_EVENT);           // Convert esp-homekit events into esp event system      
 
+#include "pwm.h"
+#define PWM_PERIOD    (1000)
+
 
 
 // Have set lwip sockets from 10 to 16 (maximum allowed)
@@ -59,13 +62,22 @@ static const char *TAG = "main";
 // use variables instead of defines to pass these values around as context/args
 static uint8_t status_led_gpio = 2;
 
-static uint8_t button1_idx = 1;
-static uint8_t button1_gpio = 0;
-static uint8_t light1_gpio = 2;
+typedef struct {
+    uint8_t idx;
+    uint8_t button_gpio;
+    uint8_t light_gpio;
+    uint16_t last_duty;
+} light_service_t;
+
+static light_service_t light1 = {
+    .idx = 1,
+    .button_gpio = 0,
+    .light_gpio = 2,
+    .last_duty = 0,
+};
+
 
 //static uint8_t button2_idx1 = 2;
-
-
 
 
 static led_status_t led_status;
@@ -74,44 +86,60 @@ static bool paired = false;
 
 void led_init() {
 //    gpio_set_direction(status_led_gpio, GPIO_MODE_OUTPUT);
-    gpio_set_direction(light1_gpio, GPIO_MODE_OUTPUT);
-
-//    gpio_set_level(status_led_gpio, 1);
-//    gpio_set_level(light1_gpio, 1);
+    gpio_set_direction(light1.light_gpio, GPIO_MODE_OUTPUT);
 }
 
 
-void led_identify(homekit_value_t _value) {
+void status_led_identify(homekit_value_t _value) {
     ESP_LOGI(TAG, "LED identify");
-
     led_status_signal(led_status, &identify);
 }
 
 
-void lightbulb_callback(homekit_characteristic_t *_ch, homekit_value_t value, void *context) {
+void lightbulb_on_callback(homekit_characteristic_t *_ch, homekit_value_t value, void *context) {
     if (value.format != homekit_format_bool) {
         ESP_LOGI(TAG, "Invalid value format: %d", value.format);
         return;
     }
+//    light_service_t light = *((light_service_t*) context);
+    light_service_t* light = (light_service_t*) context;
 
-    int light_gpio = *((uint8_t*) context);
 
-    homekit_characteristic_t *service_name = homekit_service_characteristic_by_type(
-                _ch->service, HOMEKIT_CHARACTERISTIC_NAME 
-            );
- 
-    ESP_LOGI(TAG, "lightbulb_callback. name %s, lightbulb gpio %d", service_name->value.string_value, light_gpio);
 
-    gpio_set_level(light_gpio, value.bool_value ? 0 : 1);
+    ESP_LOGI(TAG, "Characteristic ON; Bool_val: %d, Last_Duty: %d, Set PWM: %d", value.bool_value ? 1 : 0, light->last_duty, value.bool_value ? light->last_duty : 0);
+
+
+
+//    gpio_set_level(light.light_gpio, value.bool_value ? 0 : 1);
+
+//    pwm_set_duty((light.idx-1), value.bool_value ? PWM_PERIOD : 0);
 }
-
-
-homekit_characteristic_t lightbulb1_service = HOMEKIT_CHARACTERISTIC_(
+homekit_characteristic_t lightbulb1_on = HOMEKIT_CHARACTERISTIC_(
     ON, false, .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
-		lightbulb_callback, .context=&light1_gpio
+		lightbulb_on_callback, .context=&light1
 	)
 );
 
+void lightbulb_brightness_callback(homekit_characteristic_t *_ch, homekit_value_t value, void *context) {
+    if (value.format != homekit_format_int) {
+        ESP_LOGI(TAG, "Invalid value format: %d", value.format);
+        return;
+    }
+    light_service_t* light = (light_service_t*) context;
+
+    light->last_duty = value.int_value * PWM_PERIOD/100;
+
+    ESP_LOGI(TAG, "Characteristic BRIGHTNESS; value%d Duty: %d", value.int_value, light->last_duty);
+
+
+
+//    pwm_set_duty((light.idx-1), light.last_duty );
+}
+homekit_characteristic_t lightbulb1_brightness = HOMEKIT_CHARACTERISTIC_(
+    BRIGHTNESS, 100, .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
+		lightbulb_brightness_callback, .context=&light1
+	)
+);
 
 homekit_characteristic_t name = HOMEKIT_CHARACTERISTIC_(NAME, "esp");
 
@@ -123,12 +151,13 @@ homekit_accessory_t *accessories[] = {
             HOMEKIT_CHARACTERISTIC(SERIAL_NUMBER, "037A2BABF19D"),
             HOMEKIT_CHARACTERISTIC(MODEL, "MyLED"),
             HOMEKIT_CHARACTERISTIC(FIRMWARE_REVISION, "0.1"),
-            HOMEKIT_CHARACTERISTIC(IDENTIFY, led_identify),
+            HOMEKIT_CHARACTERISTIC(IDENTIFY, status_led_identify),
             NULL
         }),
         HOMEKIT_SERVICE(LIGHTBULB, .primary=true, .characteristics=(homekit_characteristic_t*[]){
             HOMEKIT_CHARACTERISTIC(NAME, "LED"),
-            &lightbulb1_service,
+            &lightbulb1_on,
+            &lightbulb1_brightness,
             NULL
         }),
         NULL
@@ -211,16 +240,14 @@ void button_callback(button_event_t event, void* context) {
             // STATELESS_PROGRAMMABLE_SWITCH supports single, double and long press events
             ESP_LOGI(TAG, "button %d long press event. start AP", button_idx);  
             //start_ap_prov();        
-
             xTaskCreate(&start_ap_task, "Start AP", 1536, NULL, tskIDLE_PRIORITY, NULL);
-
 
             break;
 
         case button_event_down:
             // Can start timers here to determine 'long press' (if required)
             ESP_LOGI(TAG, "button %d down", button_idx);
-            ESP_LOGI(TAG, "ligtbulb_service %d ", lightbulb1_service.value.bool_value);
+            ESP_LOGI(TAG, "ligtbulb_service %d ", lightbulb1_on.value.bool_value);
             
             ESP_LOGW(TAG, "HEAP %d",  heap_caps_get_free_size(MALLOC_CAP_8BIT));
  
@@ -236,13 +263,12 @@ void button_callback(button_event_t event, void* context) {
         default:
             ESP_LOGI(TAG, "button %d pressed %d times", button_idx, event);
             if (event == 1) {
-                lightbulb1_service.value.bool_value = !lightbulb1_service.value.bool_value;
-                homekit_characteristic_notify(&lightbulb1_service, lightbulb1_service.value);
+                lightbulb1_on.value.bool_value = !lightbulb1_on.value.bool_value;
+                homekit_characteristic_notify(&lightbulb1_on, lightbulb1_on.value);
             } 
             
     }
 }
-
 
 
 void create_accessory_name() {
@@ -253,7 +279,6 @@ void create_accessory_name() {
     snprintf( name_value, name_len+1, "esp_%02x%02x%02x", (&mac)[3], (&mac)[4], (&mac)[5] ); 
     name.value = HOMEKIT_STRING(name_value);
 }
-
 
 
 void app_main(void)
@@ -280,8 +305,6 @@ void app_main(void)
         //  partition size, this will fail. Comment the assert out and then nvs_flash_erase()      
     #endif
 
-//    ESP_ERROR_CHECK(nvs_flash_erase());
-//    homekit_server_reset();
 
 
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -321,9 +344,18 @@ void app_main(void)
         .long_press_time = 10000,
     );
 
-    button_create(button1_gpio, button_config, button_callback, &button1_idx);
+    button_create(light1.button_gpio, button_config, button_callback, &light1.idx);
 
+/*
+    uint32_t duties = 100;
+    uint32_t pin_num = 2;
 
+    pwm_init(PWM_PERIOD, &duties, 1, &pin_num);
+    pwm_set_channel_invert(light1.idx);
+    pwm_set_phase(0, 0);                // throws an error if not set
+    pwm_start();
+
+*/
 
 
 

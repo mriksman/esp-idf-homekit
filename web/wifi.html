@@ -22,24 +22,44 @@
 				<div id="settings" >
 					<div class="section_header">
 						<h2 class="text">Settings</h2>
-						<h2 class="refresh">v</h2>
+						<h2 class="header_click_element">☰</h2>
 					</div>
-					<div class="section_body slider ">
+					<div class="section_body slider" >
 
-						<input class="inp-cbx" id="cbx" type="checkbox" style="display: none;"/>
-<label class="cbx" for="cbx"><span>
-    <svg width="12px" height="10px" viewbox="0 0 12 10">
-      <polyline points="1.5 6 4.5 9 10.5 1"></polyline>
-    </svg></span><span>CodePenChallenge</span></label>
+						<div class="without_ape">
+							<div>
+								<input class="inp-cbx" id="reset-nvs" type="checkbox" style="display: none;"/>
+								<label class="cbx" for="reset-nvs">
+									<span><svg width="12px" height="10px" viewbox="0 0 12 10">
+										<polyline points="1.5 6 4.5 9 10.5 1"></polyline>
+									</svg></span>
+									<span>Reset NVS (Wi-Fi)</span>
+								</label>
+							</div>
+							<div class="fr">
+								<input class="inp-cbx" id="reset-homekit" type="checkbox" style="display: none;"/>
+								<label class="cbx" for="reset-homekit">
+									<span><svg width="12px" height="10px" viewbox="0 0 12 10">
+										<polyline points="1.5 6 4.5 9 10.5 1"></polyline>
+									</svg></span>
+									<span>Reset HomeKit</span>
+								</label>
+							</div>
+						</div>
 						
+						<div class="buttons">
+							<input class="restart" type="button" value="Restart"/>
+						</div>
+
+
 						
 					</div>
 				</div>
 				
 				<div id="wifi-list">
 					<div class="section_header">
-						<h2 class="text">Choose a network...</h2>
-						<h2 class="refresh">⟲</h2>
+						<h2 class="text">Connect to a network...</h2>
+						<h2 class="header_click_element">⟲</h2>
 					</div>
 					<div class="section_body">
 						<ul>
@@ -61,7 +81,7 @@
 					<input id="pwd" class="text_input" type="password" placeholder="Password" value="">
 					<div class="buttons">
 						<input class="cancel" type="button" value="Cancel"/>
-						<input class="join" type="button" value="Join" />
+						<input class="join fr" type="button" value="Join" />
 					</div>
 				</div>
 			</div>
@@ -84,7 +104,7 @@
 						<p></p>
 					</div>
 					<div class="buttons">
-						<input class="ok ctr" type="button" value="OK" />
+						<input class="ok" type="button" value="OK" />
 					</div>
 				</div>
 			</div>
@@ -98,11 +118,29 @@
 					<div class="ape">Subnet Mask:<div id="netmask" class="fr"></div></div>
 					<div class="ape">Default Gateway:<div id="gw" class="fr"></div></div>
 					<div class="buttons">
-						<input class="ok ctr" type="button" value="OK" />
+						<input class="ok" type="button" value="OK" />
 					</div>
 				</div>
 			</div>
+		
+	
 		</div>
+
+
+		<div id="modal-overlay" class="modal-overlay closed"></div>
+		<div id="modal" class="modal closed" >
+			  <div class="modal-guts">
+				<h1></h1>
+				<p></p>
+				<p></p>
+				<ul></ul>
+			  </div>
+			  <div class="buttons">
+				<input class="cancel" type="button" value="Cancel"/>
+				<input class="ok fr" type="button" value="OK" />
+			</div>
+		</div>
+
 
 		<script type="text/javascript">
 			var selectedSSID = "";
@@ -119,7 +157,6 @@
 //			refreshAPTimer = setInterval(refreshAP, refreshAPInterval);
 			refreshAP();
 			
-			
 			document.querySelector("#wifi-status .ape").addEventListener("click", (e) => { 
 				document.querySelector("#wifi").classList.add("closed");
 				document.querySelector("#connect-details").classList.remove("closed");					
@@ -133,31 +170,75 @@
 					document.querySelector("#wifi").classList.add("closed");
 					document.querySelector("#connect").classList.remove("closed");
 				}
-			});			
-
-			document.querySelectorAll('.cancel').forEach(item => {
+			});		
+			
+			document.querySelector('#wifi-list .section_header .header_click_element').addEventListener('click', (e) => { 
+				refreshAP(); 
+			});
+			
+			// All OK buttons within the #app go back to the main Wi-Fi screen
+			document.querySelectorAll('#app .buttons .ok').forEach((item) => {
 				item.addEventListener('click', (e) => { 
-					selectedSSID = "";					
+					document.querySelector("#connect-details").classList.add("closed");					
+					document.querySelector("#connect-wait").classList.add("closed");
 					document.querySelector("#connect").classList.add("closed");
 					document.querySelector("#wifi").classList.remove("closed");
 				})
 			});	
-
-			document.querySelector('.join').addEventListener('click', (e) => { 
+			document.querySelector('#connect .buttons .cancel').addEventListener('click', (e) => { 
+				selectedSSID = "";		
+				document.querySelector("#connect").classList.add("closed");
+				document.querySelector("#wifi").classList.remove("closed");				
+			});	
+			document.querySelector('#connect .buttons .join').addEventListener('click', (e) => { 
 				performConnect(); 
-			});				
-
-			document.querySelectorAll('.ok').forEach(item => {
-				item.addEventListener('click', (e) => { 
-					document.querySelector("#connect-details").classList.add("closed");					
-					document.querySelector("#connect-wait").classList.add("closed");
-					document.querySelector("#wifi").classList.remove("closed");
-				})
 			});	
 
-			document.querySelector('#wifi-list .section_header .refresh').addEventListener('click', (e) => { 
-				refreshAP(); 
+		
+			/*** Settings ***/
+			document.querySelector('#settings .section_header .header_click_element').addEventListener('click', (e) => { 
+				document.querySelector("#settings .section_body").classList.toggle("closed");				
+			});	
+			
+			document.querySelector('#settings .buttons .restart').addEventListener('click', (e) => { 
+				document.querySelector("#modal .modal-guts h1").textContent = "Restart?";
+				document.querySelector("#modal .modal-guts").getElementsByTagName('p')[0].textContent = "Are you sure you want to restart?";
+				document.querySelector("#modal .modal-guts").getElementsByTagName('p')[1].classList.add("closed");
+
+				var ul = document.querySelector("#modal .modal-guts ul");
+				ul.innerHTML = "";
+				
+				var msg;
+				if (document.querySelector('#reset-nvs').checked || document.querySelector('#reset-homekit').checked) {
+					document.querySelector("#modal .modal-guts").getElementsByTagName('p')[1].textContent = "This will also reset the following;";
+					document.querySelector("#modal .modal-guts").getElementsByTagName('p')[1].classList.remove("closed");
+				}
+				if (document.querySelector('#reset-nvs').checked) {
+					var li = document.createElement("li");
+					li.textContent = "NVS (Wi-Fi Settings)";
+					ul.appendChild(li);
+				}
+				if (document.querySelector('#reset-homekit').checked) {
+					var li = document.createElement("li");
+					li.textContent = "HomeKit Pairing";
+					ul.appendChild(li);
+				}
+				
+				document.querySelector("#modal").classList.remove("closed");
+				document.querySelector("#modal-overlay").classList.remove("closed");
+				document.querySelector("#app").classList.add("blur");
 			});		
+
+			document.querySelector("#modal .buttons").querySelectorAll("input").forEach((item) => {
+				item.addEventListener("click", (e) => {
+					document.querySelector("#modal").classList.add("closed");
+					document.querySelector("#modal-overlay").classList.add("closed");
+					document.querySelector("#app").classList.remove("blur");
+				})
+			});	
+			document.querySelector("#modal .buttons .ok").addEventListener("click", (e) => {
+				performRestart();				
+			});				
 			
 			function refreshAP(){
 				fetch("/ap.json", {
@@ -192,7 +273,7 @@
 						li.appendChild(div);					
 						
 						var div = document.createElement("div");
-						div.classList.add("pw");
+						div.classList.add("auth");
 						div.textContent = e.auth==0?'':'🔒';
 						li.appendChild(div);
 						
@@ -304,6 +385,34 @@
 					connectAttempt = false;
 				});
 			}
+			
+			function performRestart(){
+//				clearInterval(refreshAPTimer);
+				clearInterval(checkStatusTimer);
+		
+				fetch("/restart.json", {
+					method: 'POST',
+					cache: 'no-store',
+					headers: {
+					  'Content-Type': 'application/json'
+					},
+					body: JSON.stringify({ 
+						'reset-nvs': document.querySelector('#reset-nvs').checked, 
+						'reset-homekit': document.querySelector('#reset-homekit').checked
+					})
+				}).then((response) =>  {
+					if (!response.ok) {
+						throw Error(response.statusText);
+					}
+
+				}).catch((error) =>  {
+					console.log(error);
+					
+				});
+			}			
+			
+			
+			
 		</script>
 		<style>
 			body {
@@ -347,10 +456,7 @@
 			h2.text {
 				width: 100%;
 			}
-			h2.refresh {
-				margin-left: auto;
-			}
-			h2.refresh:hover {
+			h2.header_click_element:hover {
 				cursor: pointer;
 			}
 			h3 {
@@ -368,6 +474,10 @@
 				border: 2px solid #3498db;
 				border-top: none;
 				border-radius: 0 0 10px 10px;
+			}	
+			.without_ape {
+				display: flex;
+				padding:15px 30px 10px 30px;
 			}			
 			p {
 				padding: 10px;
@@ -384,12 +494,12 @@
 			ul {
 				margin: 0px;
 				padding: 0px;
+				list-style: none;
 			}
-			li {
-				list-style-type: none;
+			#wifi-list li {
 				border-bottom: 1px solid #888
 			}
-			ul > li:last-child {
+			#wifi-list ul > li:last-child {
 				border: none;
 			}
 			.ape {
@@ -402,7 +512,6 @@
 				cursor: pointer;
 			}
 
-			
 			.ssid_text {
 				width: 100%;
 				text-align: center;
@@ -421,21 +530,17 @@
 				border-radius: 10px;
 				height: 10px;
 			}
-			.pw {
+			.auth {
 				width: 20px;
 				text-align: right;
 			}
 			
-	  		.fr {
-				margin-left: auto;
-			}
-			
 			.buttons {
-				padding: 15px 30px;
 				display: flex;
 				justify-content: center;
+				padding: 10px 30px 15px 30px;
 			}
-			.join {
+	  		.fr {
 				margin-left: auto;
 			}
 			input[type="button"] {
@@ -476,84 +581,143 @@
 				border: none;
 				padding: 15px 30px;
 				width: 100%;
-				box-sizing: border-box;		// includes padding in width calcs
+				box-sizing: border-box;		/* includes padding in width calcs */
 			}
 
+			/* Modal dialog box */
+			.modal {
+				display: flex;
+				flex-direction:column;
 
-.cbx {
-  margin: auto;
-  -webkit-user-select: none;
-  user-select: none;
-  cursor: pointer;
-}
-.cbx span {
-  display: inline-block;
-  vertical-align: middle;
-  transform: translate3d(0, 0, 0);
-}
-.cbx span:first-child {
-  position: relative;
-  width: 18px;
-  height: 18px;
-  border-radius: 3px;
-  transform: scale(1);
-  vertical-align: middle;
-  border: 1px solid #3498db;
-  transition: all 0.2s ease;
-}
-.cbx span:first-child svg {
-  position: absolute;
-  top: 3px;
-  left: 2px;
-  fill: none;
-  stroke: #FFFFFF;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 16px;
-  stroke-dashoffset: 16px;
-  transition: all 0.3s ease;
-  transition-delay: 0.1s;
-  transform: translate3d(0, 0, 0);
-}
-.cbx span:first-child:before {
-  content: "";
-  width: 100%;
-  height: 100%;
-  background: #3498db;
-  display: block;
-  transform: scale(0);
-  opacity: 1;
-  border-radius: 50%;
-}
-.cbx span:last-child {
-  padding-left: 8px;
-}
-.cbx:hover span:first-child {
-  border-color: #3498db;
-}
+				width: 350px;
+				max-width: 100%;
+				height: 200px;
+				max-height: 100%;
+			  
+				position: fixed;
+				z-index: 100;
+				left: 50%;
+				top: 50%;
+				transform: translate(-50%, -50%);
 
-.inp-cbx:checked + .cbx span:first-child {
-  background: #3498db;
-  border-color: #3498db;
-  animation: wave 0.4s ease;
-}
-.inp-cbx:checked + .cbx span:first-child svg {
-  stroke-dashoffset: 0;
-}
-.inp-cbx:checked + .cbx span:first-child:before {
-  transform: scale(3.5);
-  opacity: 0;
-  transition: all 0.6s ease;
-}
+				border-radius: 10px;
+				background: white;
+				box-shadow: 0 0 60px 10px rgba(0, 0, 0, 0.9);
+			}
+			.modal-guts {
+				flex-grow:1;				/* grow within the parent flex. this pushes buttons to bottom */
+				
+				display: flex;				/* be a flex itself */
+				flex-direction: column;
+			}
+			.modal-guts p {
+				margin-bottom: auto;
+				margin-top: auto;
+			}
+			.modal-guts ul {
+				margin-left:auto;
+				margin-right: auto;
+				padding-bottom: 15px;				
+			}
+			.modal-guts ul li::before {
+				content: "◦";
+				color: #3498db;
+				display: inline-block; 
+				width: 1em;
+				margin-left: -1em;
+			}
+			.closed {
+				display: none;
+			}
+			.modal-overlay {
+				position: fixed;
+				top: 0;
+				left: 0;
+				width: 100%;
+				height: 100%;
+				z-index: 50;
+			}
+			.blur {
+				-webkit-filter: blur(2px);
+				-moz-filter: blur(2px);
+				-ms-filter: blur(2px);
+				-o-filter: blur(2px);
+				filter: blur(2px);
+			}			
 
-@keyframes wave {
-  50% {
-    transform: scale(0.9);
-  }
-}
+			/* Animated Checkbox */
+			.cbx {
+				margin: auto;
+				-webkit-user-select: none;
+				user-select: none;
+				cursor: pointer;
+			}
+			.cbx span {
+				display: inline-block;
+				vertical-align: middle;
+				transform: translate3d(0, 0, 0);
+			}
+			.cbx span:first-child {
+				position: relative;
+				width: 18px;
+				height: 18px;
+				border-radius: 3px;
+				transform: scale(1);
+				vertical-align: middle;
+				border: 1px solid #3498db;
+				transition: all 0.2s ease;
+			}
+			.cbx span:first-child svg {
+				position: absolute;
+				top: 3px;
+				left: 2px;
+				fill: none;
+				stroke: #FFFFFF;
+				stroke-width: 2;
+				stroke-linecap: round;
+				stroke-linejoin: round;
+				stroke-dasharray: 16px;
+				stroke-dashoffset: 16px;
+				transition: all 0.3s ease;
+				transition-delay: 0.1s;
+				transform: translate3d(0, 0, 0);
+			}
+			.cbx span:first-child:before {
+				content: "";
+				width: 100%;
+				height: 100%;
+				background: #3498db;
+				display: block;
+				transform: scale(0);
+				opacity: 1;
+				border-radius: 50%;
+			}
+			.cbx span:last-child {
+				padding-left: 8px;
+			}
+			.cbx:hover span:first-child {
+				border-color: #3498db;
+			}
 
+			.inp-cbx:checked + .cbx span:first-child {
+				background: #3498db;
+				border-color: #3498db;
+				animation: wave 0.4s ease;
+			}
+			.inp-cbx:checked + .cbx span:first-child svg {
+				stroke-dashoffset: 0;
+			}
+			.inp-cbx:checked + .cbx span:first-child:before {
+				transform: scale(3.5);
+				opacity: 0;
+				transition: all 0.6s ease;
+			}
 
+			@keyframes wave {
+			  50% {
+				transform: scale(0.9);
+			  }
+			}
 
 
 			/* SpinKit is licensed under the MIT License. Copyright (c) 2015 Tobias Ahlin */

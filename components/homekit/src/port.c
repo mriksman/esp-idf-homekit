@@ -107,8 +107,8 @@ void homekit_mdns_init() {
 
 void homekit_mdns_configure_init(const char *instance_name, int port) {
     mdns_hostname_set(instance_name);
-//    mdns_instance_name_set(instance_name);
-    mdns_service_add(NULL, "_hap", "_tcp", port, NULL, 0);
+    mdns_instance_name_set(instance_name);
+    mdns_service_add(instance_name, "_hap", "_tcp", port, NULL, 0);
 }
 
 void homekit_mdns_add_txt(const char *key, const char *format, ...) {

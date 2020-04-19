@@ -1,12 +1,15 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <freertos/timers.h>
 
 #include "esp_http_server.h"
 #include "esp_wifi.h"
 #include "cJSON.h"
+#include "nvs_flash.h"
 
 #include "wifi.h"
 #include "httpd.h"
+#include <homekit/homekit.h>
 
 #include "esp_log.h"
 static const char *TAG = "myhttpd";
@@ -83,7 +86,7 @@ esp_err_t connect_json_handler(httpd_req_t *req)
     if (total_len >= SCRATCH_BUFSIZE) {
         /* Respond with 500 Internal Server Error */
         #ifdef CONFIG_IDF_TARGET_ESP32
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Content too long");
         #elif CONFIG_IDF_TARGET_ESP8266
             httpd_resp_send_500(req);
         #endif
@@ -94,7 +97,7 @@ esp_err_t connect_json_handler(httpd_req_t *req)
         if (received <= 0) {
             /* Respond with 500 Internal Server Error */
             #ifdef CONFIG_IDF_TARGET_ESP32            
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post control value");
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error receiving data");
             #elif CONFIG_IDF_TARGET_ESP8266
                 httpd_resp_send_500(req);
             #endif
@@ -128,7 +131,67 @@ esp_err_t connect_json_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static void restart_timer_callback(TimerHandle_t timer) {
+    esp_restart();
+}
 
+esp_err_t restart_json_handler(httpd_req_t *req)
+{
+    int total_len = req->content_len;
+    int cur_len = 0;
+    char buf[SCRATCH_BUFSIZE];
+    int received = 0;
+    char msg[60];
+
+    if (total_len >= SCRATCH_BUFSIZE) {
+        /* Respond with 500 Internal Server Error */
+        #ifdef CONFIG_IDF_TARGET_ESP32
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Content too long");
+        #elif CONFIG_IDF_TARGET_ESP8266
+            httpd_resp_send_500(req);
+        #endif
+        return ESP_FAIL;
+    }
+    while (cur_len < total_len) {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0) {
+            /* Respond with 500 Internal Server Error */
+            #ifdef CONFIG_IDF_TARGET_ESP32            
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error receiving data");
+            #elif CONFIG_IDF_TARGET_ESP8266
+                httpd_resp_send_500(req);
+            #endif
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[total_len] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    cJSON *reset_nvs = cJSON_GetObjectItem(root, "reset-nvs");
+    cJSON *reset_homekit = cJSON_GetObjectItem(root, "reset-homekit");
+ 
+    if (cJSON_IsTrue(reset_nvs)) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+    }
+    if (cJSON_IsTrue(reset_homekit)) {
+        homekit_server_reset();
+    }
+
+    //start Timer to restart.
+    TimerHandle_t restart_timer;
+    restart_timer = xTimerCreate("Restart Timer", pdMS_TO_TICKS(5000),
+            pdFALSE, NULL, restart_timer_callback
+        );
+    xTimerStart(restart_timer, 1);
+
+    snprintf(msg, 60, "Reset nvs = %d, homekit = %d. Restarting in 5 seconds...", cJSON_IsTrue(reset_nvs), cJSON_IsTrue(reset_homekit));
+    ESP_LOGW(TAG, msg);
+    httpd_resp_send(req, msg, strlen(msg));
+
+    cJSON_Delete(root);
+    return ESP_OK;
+}
 
 esp_err_t status_json_handler(httpd_req_t *req)
 {
@@ -226,6 +289,14 @@ httpd_handle_t start_webserver(void)
             .user_ctx  = NULL
         };
         httpd_register_uri_handler(server, &connect_json_page);
+
+        httpd_uri_t restart_json_page = {
+            .uri       = "/restart.json",
+            .method    = HTTP_POST,
+            .handler   = restart_json_handler,
+            .user_ctx  = NULL
+        };
+        httpd_register_uri_handler(server, &restart_json_page);
 
         return server;
     }

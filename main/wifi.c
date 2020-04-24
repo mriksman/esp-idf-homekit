@@ -34,22 +34,15 @@ SemaphoreHandle_t* get_wifi_mutex() {
     return &g_wifi_mutex;
 }
 
-
-/* Helper function to check for Mutex before issuing a connect command */
-static void _wifi_connect(void* arg) {
-    if( xSemaphoreTake(g_wifi_mutex, 100/portTICK_PERIOD_MS) == pdTRUE) {
-        esp_wifi_connect();
-    }
-    else {
-        ESP_LOGI(TAG, "Scan or connect in progress");
-    }
-}
-
 static void retry_connect_task(void * arg)
 {
     for(;;) {
         ESP_LOGI(TAG, "Retry connection task");
-        _wifi_connect(NULL);
+        if( xSemaphoreTake(g_wifi_mutex, 100/portTICK_PERIOD_MS) == pdTRUE) {
+            esp_wifi_connect();
+        } else {
+            ESP_LOGI(TAG, "Wi-Fi scan in progress");
+        }
         vTaskDelay(10000/portTICK_PERIOD_MS);
     }
 }
@@ -85,6 +78,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
             esp_wifi_connect();
 
         } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+
             #ifdef CONFIG_IDF_TARGET_ESP8266
             // ESP8266 RTOS SDK will continually retry every 2 seconds. To override, 
             //  (and to keep consistent with ESP-IDF) call esp_wifi_disconnect()
@@ -104,7 +98,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 if (wifi_mode != WIFI_MODE_APSTA) {
                     ESP_LOGI(TAG, "Failed to connect to AP. Start softAP Provisioning");
                     // Currently not in softAP (APSTA) mode. Start it.
-                    start_ap_prov();
+                    esp_wifi_stop();        // stop/start - attempt to fix issue where it loses connection 
+                    start_ap_prov();        // in STA mode to router, starts in APSTA mode, and cannot connect 
+                    esp_wifi_start();       // to router (no AP found), and soft AP is not visible
                 }
                 // Keep trying to connect to existing AP at a slower rate
                 if (retry_connect_task_handle == NULL) {
@@ -183,14 +179,6 @@ void wifi_init()
 {
     g_wifi_mutex = xSemaphoreCreateMutex();
 
-/*
-    esp_timer_create_args_t timer_args = {
-        .callback = &_wifi_connect,
-    };
-
-    ESP_ERROR_CHECK(esp_timer_create(&timer_args, &s_wifi_reconnect_timer));
-*/
-
     // Mandatory Wi-Fi initialisation code
     #ifdef CONFIG_IDF_TARGET_ESP32
         ESP_ERROR_CHECK(esp_netif_init());             // previously tcpip_adapter_init()
@@ -235,5 +223,4 @@ void wifi_init()
     }
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    esp_wifi_set_ps(WIFI_PS_NONE);
 }

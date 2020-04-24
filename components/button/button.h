@@ -5,8 +5,8 @@ extern "C" {
 #endif
 
 typedef enum {
-    button_active_low = 0,
-    button_active_high = 1,
+    BUTTON_ACTIVE_LOW = 0,
+    BUTTON_ACTIVE_HIGH = 1,
 } button_active_level_t;
 
 typedef struct {
@@ -17,9 +17,9 @@ typedef struct {
 } button_config_t;
 
 typedef enum {
-    button_event_down = -3,
-    button_event_up = -2,
-    button_event_long_press = -1,
+    BUTTON_EVENT_DOWN = -3,
+    BUTTON_EVENT_UP = -2,
+    BUTTON_EVENT_LONG_PRESS = -1,
 } button_event_t;
 
 typedef void (*button_callback_fn)(button_event_t event, void* context);

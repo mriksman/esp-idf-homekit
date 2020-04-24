@@ -3006,6 +3006,14 @@ static void homekit_client_process(client_context_t *context) {
         context->data_size-context->data_available
     );
     if (data_len == 0) {
+
+
+
+                    CLIENT_ERROR(context, "****** Datalen == 0. Disconnecting ******");
+
+
+
+
         context->disconnect = true;
         return;
     }
@@ -3237,11 +3245,35 @@ void homekit_server_close_clients(homekit_server_t *server) {
     while (context) {
         client_context_t *next = context->next;
 
+
+
+    char address_buffer[INET_ADDRSTRLEN];
+
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
+    if (getpeername(context->socket, (struct sockaddr *)&addr, &addr_len) == 0) {
+        inet_ntop(AF_INET, &addr.sin_addr, address_buffer, sizeof(address_buffer));
+    } else {
+        strcpy(address_buffer, "?.?.?.?");
+    }
+
+    CLIENT_INFO(context, "** %s **** homekit_server_close_clients ***** Discon %s", address_buffer, context->disconnect ? "Yes!" : "No");
+
+
+
+
         if (context->disconnect)
             homekit_server_close_client(server, context);
 
         context = next;
     }
+
+
+
+    DEBUG("\n\n");
+
+
+
 }
 
 
@@ -3277,12 +3309,24 @@ static void homekit_run_server(homekit_server_t *server)
             client_context_t *context = server->clients;
             while (context && triggered_nfds) {
                 if (FD_ISSET(context->socket, &read_fds)) {
+
+
+
+                        CLIENT_INFO(context, "****** homekit_run_server ***** Discon %s", context->disconnect ? "Yes!" : "No");
+
+
                     homekit_client_process(context);
                     triggered_nfds--;
                 }
 
                 context = context->next;
             }
+
+
+
+            DEBUG("\n\n");
+
+
 
             homekit_server_close_clients(server);
         }

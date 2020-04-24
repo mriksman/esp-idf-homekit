@@ -1,6 +1,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"              // For EventGroupHandle_t
+#include "driver/gpio.h"
 
 #include "esp_event.h"
 
@@ -15,18 +16,21 @@
 #endif
 
 #include "button.h"
+ESP_EVENT_DEFINE_BASE(BUTTON_EVENT);            // Convert button events into esp event system      
+
 #include "led_status.h"
 
 #include <homekit/homekit.h>
 #include <homekit/characteristics.h>
-#include <driver/gpio.h>
+
 #ifdef CONFIG_IDF_TARGET_ESP8266
 #include "mdns.h"                               // ESP8266 RTOS SDK mDNS needs legacy STATUS_EVENT to be sent to it
 #endif
-ESP_EVENT_DEFINE_BASE(HOMEKIT_EVENT);           // Convert esp-homekit events into esp event system      
+ESP_EVENT_DEFINE_BASE(HOMEKIT_EVENT);            // Convert esp-homekit events into esp event system      
 
-#include "pwm.h"
-#define PWM_PERIOD    (1000)
+
+#include "multipwm.h"
+#define PWM_PERIOD    (UINT16_MAX) //counts
 
 
 
@@ -66,15 +70,18 @@ typedef struct {
     uint8_t idx;
     uint8_t button_gpio;
     uint8_t light_gpio;
-    uint16_t last_duty;
+    uint16_t last_brightness;
 } light_service_t;
 
 static light_service_t light1 = {
     .idx = 1,
     .button_gpio = 0,
     .light_gpio = 2,
-    .last_duty = 0,
+    .last_brightness = 100,
 };
+
+
+IRAM_ATTR pwm_info_t pwm_info;
 
 
 //static uint8_t button2_idx1 = 2;
@@ -89,7 +96,6 @@ void led_init() {
     gpio_set_direction(light1.light_gpio, GPIO_MODE_OUTPUT);
 }
 
-
 void status_led_identify(homekit_value_t _value) {
     ESP_LOGI(TAG, "LED identify");
     led_status_signal(led_status, &identify);
@@ -101,18 +107,29 @@ void lightbulb_on_callback(homekit_characteristic_t *_ch, homekit_value_t value,
         ESP_LOGI(TAG, "Invalid value format: %d", value.format);
         return;
     }
-//    light_service_t light = *((light_service_t*) context);
-    light_service_t* light = (light_service_t*) context;
+
+    homekit_characteristic_t *brightness = homekit_service_characteristic_by_type(
+                _ch->service, HOMEKIT_CHARACTERISTIC_BRIGHTNESS 
+            );
+
+    ESP_LOGI(TAG, "Characteristic ON; Bool_val: %d, Brightness_val: %d, Set PWM: %d", 
+            value.bool_value ? 1 : 0, 
+            brightness->value.int_value, 
+            value.bool_value ? brightness->value.int_value * PWM_PERIOD/100 : 0);
 
 
-
-    ESP_LOGI(TAG, "Characteristic ON; Bool_val: %d, Last_Duty: %d, Set PWM: %d", value.bool_value ? 1 : 0, light->last_duty, value.bool_value ? light->last_duty : 0);
-
-
+    light_service_t light = *((light_service_t*) context);
 
 //    gpio_set_level(light.light_gpio, value.bool_value ? 0 : 1);
 
-//    pwm_set_duty((light.idx-1), value.bool_value ? PWM_PERIOD : 0);
+//    pwm_set_duty(0, value.bool_value ? brightness->value.int_value * PWM_PERIOD/100 : 0);
+//    pwm_start();
+
+
+//    multipwm_stop(&pwm_info);
+    multipwm_set_duty(&pwm_info, 0, value.bool_value ? brightness->value.int_value * PWM_PERIOD/100 : 0);
+//    multipwm_start(&pwm_info);
+
 }
 homekit_characteristic_t lightbulb1_on = HOMEKIT_CHARACTERISTIC_(
     ON, false, .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
@@ -125,15 +142,20 @@ void lightbulb_brightness_callback(homekit_characteristic_t *_ch, homekit_value_
         ESP_LOGI(TAG, "Invalid value format: %d", value.format);
         return;
     }
-    light_service_t* light = (light_service_t*) context;
 
-    light->last_duty = value.int_value * PWM_PERIOD/100;
+    ESP_LOGI(TAG, "Characteristic BRIGHTNESS; Brightness_val: %d, Set PWM: %d", 
+            value.int_value, 
+            value.int_value * PWM_PERIOD/100);
 
-    ESP_LOGI(TAG, "Characteristic BRIGHTNESS; value%d Duty: %d", value.int_value, light->last_duty);
+   
+    light_service_t light = *((light_service_t*) context);
 
+//    pwm_set_duty(0, value.int_value * PWM_PERIOD/100);
+//    pwm_start();
 
-
-//    pwm_set_duty((light.idx-1), light.last_duty );
+//    multipwm_stop(&pwm_info);
+    multipwm_set_duty(&pwm_info, 0, value.int_value * PWM_PERIOD/100);
+//    multipwm_start(&pwm_info);
 }
 homekit_characteristic_t lightbulb1_brightness = HOMEKIT_CHARACTERISTIC_(
     BRIGHTNESS, 100, .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
@@ -166,6 +188,16 @@ homekit_accessory_t *accessories[] = {
 };
 
 
+// Need to call this function from a task different to the button_callback (executing in Tmr Svc)
+// Have had occurrences when, if called from button_callback directly, the scheduler seems
+// to lock up. 
+static void start_ap_task(void * arg)
+{
+    ESP_LOGI(TAG, "Start AP task");
+    start_ap_prov();
+    vTaskDelete(NULL);
+}
+
 #ifdef CONFIG_IDF_TARGET_ESP8266
 /* Legacy event loop still required for the old (ESP8266 RTOS SDK) mDNS event loop dispatch */
 esp_err_t legacy_event_handler(void *ctx, system_event_t *event) {
@@ -174,8 +206,35 @@ esp_err_t legacy_event_handler(void *ctx, system_event_t *event) {
 }
 #endif
 
+
+
+
+void resolve_mdns_host(const char * host_name)
+{
+    ESP_LOGI(TAG, "Query A: %s.local", host_name);
+
+    struct ip4_addr addr;
+    addr.addr = 0;
+
+    esp_err_t err = mdns_query_a(host_name, 2000,  &addr);
+    if(err){
+        if(err == ESP_ERR_NOT_FOUND){
+            printf("Host was not found!");
+            return;
+        }
+        printf("Query Failed");
+        return;
+    }
+
+    ESP_LOGI(TAG, IPSTR, IP2STR(&addr));
+}
+
+
+
+
+
 /* Event handler for Events */
-static void status_event_handler(void* arg, esp_event_base_t event_base,
+static void main_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT) {
         if (event_id == WIFI_EVENT_AP_START || event_id == WIFI_EVENT_STA_DISCONNECTED) {
@@ -209,42 +268,16 @@ static void status_event_handler(void* arg, esp_event_base_t event_base,
             paired = homekit_is_paired();
             led_status_set(led_status, paired ? &normal_mode : &not_normal);
         }
-    }
-}
+    } else if (event_base == BUTTON_EVENT) {
+        uint8_t button_idx = *((uint8_t*) event_data);
 
-void homekit_on_event(homekit_event_t event) {
-    esp_event_post(HOMEKIT_EVENT, event, NULL, sizeof(NULL), 100/portTICK_PERIOD_MS);
-}
-
-homekit_server_config_t config = {
-    .accessories = accessories,
-    .password = "111-11-111",
-    .on_event = homekit_on_event,
-};
-
-// Need to call this function from a task different to the button_callback (executing in Tmr Svc)
-// Have had occurrences when, if called from button_callback directly, the scheduler seems
-// to lock up. 
-static void start_ap_task(void * arg)
-{
-    ESP_LOGI(TAG, "Start AP task");
-    start_ap_prov();
-    vTaskDelete(NULL);
-}
-
-void button_callback(button_event_t event, void* context) {
-    int button_idx = *((uint8_t*) context);
-
-    switch (event) {
-        case button_event_long_press:
+        if (event_id == BUTTON_EVENT_LONG_PRESS) {
             // STATELESS_PROGRAMMABLE_SWITCH supports single, double and long press events
             ESP_LOGI(TAG, "button %d long press event. start AP", button_idx);  
             //start_ap_prov();        
             xTaskCreate(&start_ap_task, "Start AP", 1536, NULL, tskIDLE_PRIORITY, NULL);
-
-            break;
-
-        case button_event_down:
+        }
+        else if (event_id == BUTTON_EVENT_DOWN) {
             // Can start timers here to determine 'long press' (if required)
             ESP_LOGI(TAG, "button %d down", button_idx);
             ESP_LOGI(TAG, "ligtbulb_service %d ", lightbulb1_on.value.bool_value);
@@ -255,21 +288,56 @@ void button_callback(button_event_t event, void* context) {
             vTaskList(buffer);
             ESP_LOGI(TAG, buffer);
 
-            break;
-        case button_event_up:
+            ESP_LOGW(TAG, "INTENABLE %x", xthal_get_intenable() );
+
+
+
+
+            multipwm_dump_schedule(&pwm_info);
+
+
+
+        }
+        else if (event_id == BUTTON_EVENT_UP) {
             ESP_LOGI(TAG, "button %d up", button_idx);
- 
-            break;
-        default:
-            ESP_LOGI(TAG, "button %d pressed %d times", button_idx, event);
-            if (event == 1) {
+        }
+        else {
+            ESP_LOGI(TAG, "button %d pressed %d times", button_idx, event_id);
+
+            if (event_id == 1) {
                 lightbulb1_on.value.bool_value = !lightbulb1_on.value.bool_value;
                 homekit_characteristic_notify(&lightbulb1_on, lightbulb1_on.value);
             } 
-            
+            if (event_id == 2) {
+//                _xt_isr_mask(1 << 10);
+//                ESP_LOGW(TAG, "INTENABLE %x", xthal_get_intenable() );
+
+    resolve_mdns_host("Mike-iPhone-11-Pro");
+
+            } 
+
+            if (event_id > 4 && event_id < 8) {
+                esp_wifi_stop();
+            } else if (event_id > 10) {
+                esp_wifi_start();
+            }
+
+        }
     }
 }
 
+void homekit_on_event(homekit_event_t event) {
+    esp_event_post(HOMEKIT_EVENT, event, NULL, sizeof(NULL), 100/portTICK_PERIOD_MS);
+}
+void button_callback(button_event_t event, void* context) {
+    esp_event_post(BUTTON_EVENT, event, context, sizeof(uint8_t), 100/portTICK_PERIOD_MS);
+}
+
+homekit_server_config_t config = {
+    .accessories = accessories,
+    .password = "111-11-111",
+    .on_event = homekit_on_event,
+};
 
 void create_accessory_name() {
     uint8_t mac;
@@ -279,6 +347,8 @@ void create_accessory_name() {
     snprintf( name_value, name_len+1, "esp_%02x%02x%02x", (&mac)[3], (&mac)[4], (&mac)[5] ); 
     name.value = HOMEKIT_STRING(name_value);
 }
+
+
 
 
 void app_main(void)
@@ -311,13 +381,15 @@ void app_main(void)
 
    // esp_event_handler_register is being deprecated
     #ifdef CONFIG_IDF_TARGET_ESP32
-        ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, status_event_handler, NULL, NULL));
-        ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, status_event_handler, NULL, NULL));
-        ESP_ERROR_CHECK(esp_event_handler_instance_register(HOMEKIT_EVENT, ESP_EVENT_ANY_ID, status_event_handler, NULL, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, main_event_handler, NULL, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, main_event_handler, NULL, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(HOMEKIT_EVENT, ESP_EVENT_ANY_ID, main_event_handler, NULL, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(BUTTON_EVENT, ESP_EVENT_ANY_ID, main_event_handler, NULL, NULL));
     #elif CONFIG_IDF_TARGET_ESP8266
-        ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, status_event_handler, NULL));
-        ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, status_event_handler, NULL));
-        ESP_ERROR_CHECK(esp_event_handler_register(HOMEKIT_EVENT, ESP_EVENT_ANY_ID, status_event_handler, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, main_event_handler, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, main_event_handler, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_register(HOMEKIT_EVENT, ESP_EVENT_ANY_ID, main_event_handler, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_register(BUTTON_EVENT, ESP_EVENT_ANY_ID, main_event_handler, NULL));
     #endif
 
     #if CONFIG_IDF_TARGET_ESP8266
@@ -339,7 +411,7 @@ void app_main(void)
 
 
     button_config_t button_config = BUTTON_CONFIG(
-        button_active_low,
+        BUTTON_ACTIVE_LOW,
         .repeat_press_timeout = 500,
         .long_press_time = 10000,
     );
@@ -350,13 +422,24 @@ void app_main(void)
     uint32_t duties = 100;
     uint32_t pin_num = 2;
 
-    pwm_init(PWM_PERIOD, &duties, 1, &pin_num);
-    pwm_set_channel_invert(light1.idx);
-    pwm_set_phase(0, 0);                // throws an error if not set
+    pwm_init(PWM_PERIOD, duties, 1, pin_num);
+    pwm_set_channel_invert(1);
+    pwm_set_phases(phase);                // throws an error if not set
     pwm_start();
 
 */
 
+    uint8_t pins[] = { 2 };
+
+    pwm_info.channels = 1;
+    pwm_info.reverse = true;
+
+    multipwm_init(&pwm_info);
+    //multipwm_set_freq(&pwm_info, 65535);
+    for (uint8_t i=0; i<pwm_info.channels; i++) {
+        multipwm_set_pin(&pwm_info, i, pins[i]);
+    }
+    multipwm_start(&pwm_info);
 
 
 

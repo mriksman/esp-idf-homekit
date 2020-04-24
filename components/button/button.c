@@ -34,7 +34,7 @@ static TimerHandle_t toggle_timer = NULL;
 
 static void button_toggle_callback(button_t *button) {
 
-    if (button->last_high == (button->config.active_level == button_active_high)) {
+    if (button->last_high == (button->config.active_level == BUTTON_ACTIVE_HIGH)) {
         // pressed
         button->press_count++;
         xTimerStart(button->repeat_press_timeout_timer, 1);
@@ -49,7 +49,7 @@ static void button_toggle_callback(button_t *button) {
         }
         if (button->repeat_press_timeout_timer
                     && !xTimerIsTimerActive(button->repeat_press_timeout_timer)) {
-            button->callback(button_event_up, button->context);
+            button->callback(BUTTON_EVENT_UP, button->context);
         }
     }
 }
@@ -58,7 +58,7 @@ static void button_toggle_callback(button_t *button) {
 static void button_long_press_timer_callback(TimerHandle_t timer) {
     button_t *button = (button_t*) pvTimerGetTimerID(timer);
 
-    button->callback(button_event_long_press, button->context);
+    button->callback(BUTTON_EVENT_LONG_PRESS, button->context);
     button->press_count = 0;
 }
 
@@ -67,8 +67,8 @@ static void button_repeat_press_timeout_timer_callback(TimerHandle_t timer) {
 
     // if it's still being pressed, then it's not a momentary press, it's 
     //  a 'press down and hold'
-    if (button->last_high == (button->config.active_level == button_active_high)) {
-        button->callback(button_event_down, button->context);
+    if (button->last_high == (button->config.active_level == BUTTON_ACTIVE_HIGH)) {
+        button->callback(BUTTON_EVENT_DOWN, button->context);
     } else {
         button->callback(button->press_count, button->context);
     }
@@ -180,7 +180,7 @@ int button_create(const uint8_t gpio_num,
     }
 
     gpio_set_direction(button->gpio_num, GPIO_MODE_INPUT);
-    if (config.active_level == button_active_low) {
+    if (config.active_level == BUTTON_ACTIVE_LOW) {
         gpio_set_pull_mode(button->gpio_num, GPIO_PULLUP_ONLY);
     } else {
         gpio_set_pull_mode(button->gpio_num, GPIO_PULLDOWN_ONLY);

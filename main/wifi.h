@@ -6,7 +6,7 @@ extern "C" {
 
 SemaphoreHandle_t* get_wifi_mutex();
 
-void wifi_init(void);
+void wifi_init();
 void start_ap_prov();
 
 #ifdef __cplusplus

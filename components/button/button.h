@@ -17,9 +17,9 @@ typedef struct {
 } button_config_t;
 
 typedef enum {
-    BUTTON_EVENT_DOWN = -3,
-    BUTTON_EVENT_UP = -2,
-    BUTTON_EVENT_LONG_PRESS = -1,
+    BUTTON_EVENT_DOWN = 100,
+    BUTTON_EVENT_UP = 101,
+    BUTTON_EVENT_LONG_PRESS = 102,    // Can't use -1 as that is what ESP_EVENT_ANY_ID is
 } button_event_t;
 
 typedef void (*button_callback_fn)(button_event_t event, void* context);

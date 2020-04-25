@@ -239,7 +239,7 @@ void multipwm_start(pwm_info_t *pwm_info) {
 //    timer_set_run(FRC1, true);            // sets frc1.ctrl.en (bit 7) to true
     hw_timer_enable(true);
 
-    ESP_LOGI(TAG, "PWM started");
+//    ESP_LOGI(TAG, "PWM started");
 }
 
 void multipwm_stop(pwm_info_t *pwm_info) {
@@ -251,6 +251,6 @@ void multipwm_stop(pwm_info_t *pwm_info) {
 //    timer_set_run(FRC1, false);
     hw_timer_enable(false);
 
-    ESP_LOGI(TAG, "PWM stopped");
+//    ESP_LOGI(TAG, "PWM stopped");
 }
 

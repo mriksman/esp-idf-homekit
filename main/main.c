@@ -18,19 +18,8 @@
 #define SSID            "SSID"
 #define AP_PASSWORD     "PASSWORD"
 
-
-// Have set lwip sockets from 10 to 16 (maximum allowed)
-//   5 for httpd (down from default of 7)
-//   12 for HomeKit (up from 8)
-
-
 #include "esp_log.h"
 static const char *TAG = "main";
-
-
-
-IRAM_ATTR pwm_info_t pwm_info;
-
 
 
 void status_led_identify(homekit_value_t _value) {
@@ -59,7 +48,7 @@ void lightbulb_on_callback(homekit_characteristic_t *_ch, homekit_value_t value,
 */
 
 // using ported mulitpwm (uses FRC1)
-    multipwm_set_duty(&pwm_info, 0, value.bool_value ? brightness->value.int_value * PWM_PERIOD/100 : 0);
+//    multipwm_set_duty(&pwm_info, 0, value.bool_value ? brightness->value.int_value * PWM_PERIOD/100 : 0);
 
 
 }
@@ -86,7 +75,7 @@ void lightbulb_brightness_callback(homekit_characteristic_t *_ch, homekit_value_
 */
 
 // using ported mulitpwm (uses FRC1)
-    multipwm_set_duty(&pwm_info, 0, value.int_value * PWM_PERIOD/100);
+//    multipwm_set_duty(&pwm_info, 0, value.int_value * PWM_PERIOD/100);
 
 }
 homekit_characteristic_t lightbulb1_brightness = HOMEKIT_CHARACTERISTIC_(
@@ -147,8 +136,35 @@ void create_accessory_name() {
     name.value = HOMEKIT_STRING(name_value);
 }
 
+
+IRAM_ATTR void multipwm_task(void *pvParameters) {
+    const TickType_t xPeriod = pdMS_TO_TICKS(10);
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    
+    uint8_t pins[] = { 2 };
+
+    pwm_info_t pwm_info;
+    pwm_info.channels = 1;
+    pwm_info.reverse = true;
+
+    multipwm_init(&pwm_info);
+//    multipwm_set_freq(&pwm_info, 65535);
+    for (uint8_t i=0; i<pwm_info.channels; i++) {
+        multipwm_set_pin(&pwm_info, i, pins[i]);
+    }
+
+    while(1) { 
+        multipwm_stop(&pwm_info);
+        multipwm_set_duty(&pwm_info, 0, lightbulb1_on.value.bool_value ? lightbulb1_brightness.value.int_value * PWM_PERIOD/100 : 0);
+        multipwm_start(&pwm_info);
+                
+        vTaskDelayUntil(&xLastWakeTime, xPeriod);
+    }
+}
+
 void app_main(void) {
     esp_log_level_set("esp_timer", ESP_LOG_INFO);   //mdns calls esp_timer_create which fires off a debug log every 100 ticks
+    esp_log_level_set("multipwm", ESP_LOG_WARN);   
 
     esp_event_loop_init(legacy_event_handler, NULL);
 
@@ -180,17 +196,5 @@ void app_main(void) {
     pwm_start();
 */
 
-// using ported mulitpwm (uses FRC1)
-    uint8_t pins[] = { 2 };             // LED is on GPIO 2
-
-    pwm_info.channels = 1;
-    pwm_info.reverse = true;
-
-    multipwm_init(&pwm_info);
-    //multipwm_set_freq(&pwm_info, 65535);
-    for (uint8_t i=0; i<pwm_info.channels; i++) {
-        multipwm_set_pin(&pwm_info, i, pins[i]);
-    }
-    multipwm_start(&pwm_info);
-
+    xTaskCreate(multipwm_task, "multipwm", 1024, NULL, 2, NULL);
 }

@@ -4,6 +4,7 @@
 #include "driver/gpio.h"
 
 #include "esp_event.h"
+#include "esp_event_loop.h"
 
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -16,7 +17,7 @@
 #endif
 
 #include "button.h"
-ESP_EVENT_DEFINE_BASE(BUTTON_EVENT);            // Convert button events into esp event system      
+//ESP_EVENT_DEFINE_BASE(BUTTON_EVENT);            // Convert button events into esp event system      
 
 #include "led_status.h"
 
@@ -26,7 +27,7 @@ ESP_EVENT_DEFINE_BASE(BUTTON_EVENT);            // Convert button events into es
 #ifdef CONFIG_IDF_TARGET_ESP8266
 #include "mdns.h"                               // ESP8266 RTOS SDK mDNS needs legacy STATUS_EVENT to be sent to it
 #endif
-ESP_EVENT_DEFINE_BASE(HOMEKIT_EVENT);            // Convert esp-homekit events into esp event system      
+//ESP_EVENT_DEFINE_BASE(HOMEKIT_EVENT);            // Convert esp-homekit events into esp event system      
 
 
 #include "multipwm.h"
@@ -47,15 +48,15 @@ static led_status_pattern_t identify = LED_STATUS_PATTERN({100, -100, 100, -350,
 
 void on_wifi_ready();
 
-
+/*
 // *** Included to show app_desc_t from partition ***
 #include "esp_app_format.h"
 #include "esp_ota_ops.h"
 #include "esp_image_format.h"
+*/
 
 #include "esp_log.h"
 static const char *TAG = "main";
-// **************************************************
 
 
 
@@ -202,6 +203,11 @@ static void start_ap_task(void * arg)
 /* Legacy event loop still required for the old (ESP8266 RTOS SDK) mDNS event loop dispatch */
 esp_err_t legacy_event_handler(void *ctx, system_event_t *event) {
     mdns_handle_system_event(ctx, event);
+
+
+    wifi_process_event(ctx, event);
+
+
     return ESP_OK;
 }
 #endif
@@ -232,8 +238,8 @@ void resolve_mdns_host(const char * host_name)
 
 
 
-
-/* Event handler for Events */
+/*
+// Event handler for Events 
 static void main_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT) {
@@ -252,32 +258,43 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
                 led_status_set(led_status, &not_normal);
             }
         }
-    } else if (event_base == HOMEKIT_EVENT) {
-        if (event_id == HOMEKIT_EVENT_CLIENT_CONNECTED) {
+    } 
+}
+*/
+
+void homekit_on_event(homekit_event_t event) {
+//    esp_event_post(HOMEKIT_EVENT, event, NULL, sizeof(NULL), 100/portTICK_PERIOD_MS);
+
+        if (event == HOMEKIT_EVENT_CLIENT_CONNECTED) {
             ESP_LOGI(TAG, "HOMEKIT_EVENT_CLIENT_CONNECTED");
             if (!paired)
                 led_status_set(led_status, &pairing);
         }
-        else if (event_id == HOMEKIT_EVENT_CLIENT_DISCONNECTED) {
+        else if (event == HOMEKIT_EVENT_CLIENT_DISCONNECTED) {
             ESP_LOGI(TAG, "HOMEKIT_EVENT_CLIENT_DISCONNECTED");
             if (!paired)
                 led_status_set(led_status, &not_normal);
         }
-        else if (event_id == HOMEKIT_EVENT_PAIRING_ADDED || event_id == HOMEKIT_EVENT_PAIRING_REMOVED) {
+        else if (event == HOMEKIT_EVENT_PAIRING_ADDED || event == HOMEKIT_EVENT_PAIRING_REMOVED) {
             ESP_LOGI(TAG, "HOMEKIT_EVENT_PAIRING_ADDED or HOMEKIT_EVENT_PAIRING_REMOVED");
             paired = homekit_is_paired();
             led_status_set(led_status, paired ? &normal_mode : &not_normal);
         }
-    } else if (event_base == BUTTON_EVENT) {
-        uint8_t button_idx = *((uint8_t*) event_data);
 
-        if (event_id == BUTTON_EVENT_LONG_PRESS) {
+
+}
+void button_callback(button_event_t event, void* context) {
+//    esp_event_post(BUTTON_EVENT, event, context, sizeof(uint8_t), 100/portTICK_PERIOD_MS);
+
+        uint8_t button_idx = *((uint8_t*) context);
+
+        if (event == BUTTON_EVENT_LONG_PRESS) {
             // STATELESS_PROGRAMMABLE_SWITCH supports single, double and long press events
             ESP_LOGI(TAG, "button %d long press event. start AP", button_idx);  
             //start_ap_prov();        
             xTaskCreate(&start_ap_task, "Start AP", 1536, NULL, tskIDLE_PRIORITY, NULL);
         }
-        else if (event_id == BUTTON_EVENT_DOWN) {
+        else if (event == BUTTON_EVENT_DOWN) {
             // Can start timers here to determine 'long press' (if required)
             ESP_LOGI(TAG, "button %d down", button_idx);
             ESP_LOGI(TAG, "ligtbulb_service %d ", lightbulb1_on.value.bool_value);
@@ -298,17 +315,17 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
 
 
         }
-        else if (event_id == BUTTON_EVENT_UP) {
+        else if (event == BUTTON_EVENT_UP) {
             ESP_LOGI(TAG, "button %d up", button_idx);
         }
         else {
-            ESP_LOGI(TAG, "button %d pressed %d times", button_idx, event_id);
+            ESP_LOGI(TAG, "button %d pressed %d times", button_idx, event);
 
-            if (event_id == 1) {
+            if (event == 1) {
                 lightbulb1_on.value.bool_value = !lightbulb1_on.value.bool_value;
                 homekit_characteristic_notify(&lightbulb1_on, lightbulb1_on.value);
             } 
-            if (event_id == 2) {
+            if (event == 2) {
 //                _xt_isr_mask(1 << 10);
 //                ESP_LOGW(TAG, "INTENABLE %x", xthal_get_intenable() );
 
@@ -316,21 +333,16 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
 
             } 
 
-            if (event_id > 4 && event_id < 8) {
+            if (event > 4 && event < 8) {
                 esp_wifi_stop();
-            } else if (event_id > 10) {
+            } else if (event > 10) {
                 esp_wifi_start();
             }
 
         }
-    }
-}
+    
 
-void homekit_on_event(homekit_event_t event) {
-    esp_event_post(HOMEKIT_EVENT, event, NULL, sizeof(NULL), 100/portTICK_PERIOD_MS);
-}
-void button_callback(button_event_t event, void* context) {
-    esp_event_post(BUTTON_EVENT, event, context, sizeof(uint8_t), 100/portTICK_PERIOD_MS);
+
 }
 
 homekit_server_config_t config = {
@@ -351,9 +363,7 @@ void create_accessory_name() {
 
 
 
-void app_main(void)
-{
-    esp_log_level_set("*", ESP_LOG_DEBUG);      
+void app_main(void) {
     esp_log_level_set("httpd", ESP_LOG_INFO); 
     esp_log_level_set("httpd_uri", ESP_LOG_INFO);    
     esp_log_level_set("httpd_txrx", ESP_LOG_INFO);     
@@ -376,7 +386,7 @@ void app_main(void)
     #endif
 
 
-
+/*
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
    // esp_event_handler_register is being deprecated
@@ -391,7 +401,7 @@ void app_main(void)
         ESP_ERROR_CHECK(esp_event_handler_register(HOMEKIT_EVENT, ESP_EVENT_ANY_ID, main_event_handler, NULL));
         ESP_ERROR_CHECK(esp_event_handler_register(BUTTON_EVENT, ESP_EVENT_ANY_ID, main_event_handler, NULL));
     #endif
-
+*/
     #if CONFIG_IDF_TARGET_ESP8266
         /* mDNS in ESP8266 RTOS SDK 3.3 still relies on legacy system event loop 
            to dispatch events to it using mdns_handle_system_event */
@@ -442,7 +452,7 @@ void app_main(void)
     multipwm_start(&pwm_info);
 
 
-
+/*
     const esp_partition_t *next = esp_ota_get_running_partition();
     esp_app_desc_t app_desc;
     esp_ota_get_partition_description(next, &app_desc);
@@ -456,6 +466,6 @@ ota_get_app_description         0x%8x  %s   %s   %s",
              app_desc.magic_word, app_desc.version, app_desc.project_name, app_desc.time,
              app_desc1->magic_word, app_desc1->version, app_desc1->project_name, app_desc1->time
             );
-
+*/
 
 }

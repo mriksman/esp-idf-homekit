@@ -48,10 +48,13 @@ static void retry_connect_task(void * arg)
 }
 
 /* Event handler for Wi-Fi Events */
-static void wifi_event_handler(void* arg, esp_event_base_t event_base,
-                                    int32_t event_id, void* event_data) {
-    if (event_base == WIFI_EVENT) {
-        if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+//static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+//                                    int32_t event_id, void* event_data) {
+esp_err_t wifi_process_event(void *ctx, system_event_t *event) {
+
+//    if (event_base == WIFI_EVENT) {
+
+        if (event->event_id == SYSTEM_EVENT_AP_START) {
             wifi_sta_list_t connected_clients;
             esp_wifi_ap_get_sta_list(&connected_clients);
 
@@ -73,11 +76,11 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 stop_ap_prov();
             }
 
-        } else if (event_id == WIFI_EVENT_STA_START) {
+        } else if (event->event_id == SYSTEM_EVENT_STA_START) {
             // If no valid SSID was found in NVS, then this will fail
             esp_wifi_connect();
 
-        } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        } else if (event->event_id == SYSTEM_EVENT_STA_DISCONNECTED) {
 
             #ifdef CONFIG_IDF_TARGET_ESP8266
             // ESP8266 RTOS SDK will continually retry every 2 seconds. To override, 
@@ -108,8 +111,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 }
             }
         }
-    } else if (event_base == IP_EVENT) {
-        if (event_id == IP_EVENT_STA_GOT_IP) {
+//    } 
+    
+//    else if (event_base == IP_EVENT) {
+        else if (event->event_id == SYSTEM_EVENT_STA_GOT_IP) {
             s_retry_num = 0;
 
             // Connect successful/finished, give back Mutex.
@@ -130,7 +135,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 stop_ap_prov();
             }
         }
-    } 
+//    }
+    return ESP_OK;
+     
 }
 
 
@@ -188,6 +195,10 @@ void wifi_init()
         tcpip_adapter_init();
     #endif
 
+
+
+
+/*
     // esp_event_handler_register is being deprecated
     #ifdef CONFIG_IDF_TARGET_ESP32
         ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, wifi_event_handler, NULL, NULL));
@@ -200,6 +211,8 @@ void wifi_init()
         ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_event_handler, NULL));
         ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL));
     #endif
+*/
+
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));

@@ -102,8 +102,8 @@ typedef struct {
     int listen_fd;
     fd_set fds;
     int max_fd;
-    int nfds;
 
+    int client_count;
     client_context_t *clients;
 } homekit_server_t;
 
@@ -157,7 +157,7 @@ homekit_server_t *server_new() {
     homekit_server_t *server = malloc(sizeof(homekit_server_t));
     FD_ZERO(&server->fds);
     server->max_fd = 0;
-    server->nfds = 0;
+    server->client_count = 0;
     server->config = NULL;
     server->paired = false;
     server->pairing_context = NULL;
@@ -2298,6 +2298,12 @@ void homekit_server_on_update_characteristics(client_context_t *context, const b
                         max_value = *ch->max_value;
 
                     double value = j_value->valuedouble;
+                    if (j_value->type == cJSON_True) {
+                        value = 1;
+                    } else if (j_value->type == cJSON_False) {
+                        value = 0;
+                    }
+
                     if (value < min_value || value > max_value) {
                         CLIENT_ERROR(context, "Failed to update %d.%d: value %g is not in range %g..%g",
                                      aid, iid, value, min_value, max_value);
@@ -3006,14 +3012,6 @@ static void homekit_client_process(client_context_t *context) {
         context->data_size-context->data_available
     );
     if (data_len == 0) {
-
-
-
-                    CLIENT_ERROR(context, "****** Datalen == 0. Disconnecting ******");
-
-
-
-
         context->disconnect = true;
         return;
     }
@@ -3080,28 +3078,17 @@ void homekit_server_close_client(homekit_server_t *server, client_context_t *con
     CLIENT_INFO(context, "Closing client connection");
 
     FD_CLR(context->socket, &server->fds);
-    // TODO: recalc server->max_fd ?
-    server->nfds--;
+    server->client_count--;
 
     close(context->socket);
 
-    if (context->server->pairing_context && context->server->pairing_context->client == context) {
-        pairing_context_free(context->server->pairing_context);
-        context->server->pairing_context = NULL;
-    }
-
-    if (context->server->clients == context) {
-        context->server->clients = context->next;
-    } else {
-        client_context_t *c = context->server->clients;
-        while (c->next && c->next != context)
-            c = c->next;
-        if (c->next)
-            c->next = c->next->next;
+    if (server->pairing_context && server->pairing_context->client == context) {
+        pairing_context_free(server->pairing_context);
+        server->pairing_context = NULL;
     }
 
     homekit_accessories_clear_notify_callbacks(
-        context->server->config->accessories,
+        server->config->accessories,
         client_notify_characteristic,
         context
     );
@@ -3117,7 +3104,7 @@ client_context_t *homekit_server_accept_client(homekit_server_t *server) {
     if (s < 0)
         return NULL;
 
-    if (server->nfds > HOMEKIT_MAX_CLIENTS) {
+    if (server->client_count >= HOMEKIT_MAX_CLIENTS) {
         INFO("No more room for client connections (max %d)", HOMEKIT_MAX_CLIENTS);
         close(s);
         return NULL;
@@ -3158,7 +3145,7 @@ client_context_t *homekit_server_accept_client(homekit_server_t *server) {
     server->clients = context;
 
     FD_SET(s, &server->fds);
-    server->nfds++;
+    server->client_count++;
     if (s > server->max_fd)
         server->max_fd = s;
 
@@ -3241,39 +3228,28 @@ void homekit_server_process_notifications(homekit_server_t *server) {
 
 
 void homekit_server_close_clients(homekit_server_t *server) {
-    client_context_t *context = server->clients;
-    while (context) {
-        client_context_t *next = context->next;
+    int max_fd = server->listen_fd;
 
+    client_context_t head;
+    head.next = server->clients;
 
+    client_context_t *context = &head;
+    while (context->next) {
+        client_context_t *tmp = context->next;
 
-    char address_buffer[INET_ADDRSTRLEN];
+        if (tmp->disconnect) {
+            context->next = tmp->next;
+            homekit_server_close_client(server, tmp);
+        } else {
+            if (tmp->socket > max_fd)
+                max_fd = tmp->socket;
 
-    struct sockaddr_in addr;
-    socklen_t addr_len = sizeof(addr);
-    if (getpeername(context->socket, (struct sockaddr *)&addr, &addr_len) == 0) {
-        inet_ntop(AF_INET, &addr.sin_addr, address_buffer, sizeof(address_buffer));
-    } else {
-        strcpy(address_buffer, "?.?.?.?");
+            context = tmp;
+        }
     }
 
-    CLIENT_INFO(context, "** %s **** homekit_server_close_clients ***** Discon %s", address_buffer, context->disconnect ? "Yes!" : "No");
-
-
-
-
-        if (context->disconnect)
-            homekit_server_close_client(server, context);
-
-        context = next;
-    }
-
-
-
-    DEBUG("\n\n");
-
-
-
+    server->clients = head.next;
+    server->max_fd = max_fd;
 }
 
 
@@ -3292,7 +3268,7 @@ static void homekit_run_server(homekit_server_t *server)
 
     FD_SET(server->listen_fd, &server->fds);
     server->max_fd = server->listen_fd;
-    server->nfds = 1;
+    server->client_count = 0;
 
     for (;;) {
         fd_set read_fds;
@@ -3309,24 +3285,12 @@ static void homekit_run_server(homekit_server_t *server)
             client_context_t *context = server->clients;
             while (context && triggered_nfds) {
                 if (FD_ISSET(context->socket, &read_fds)) {
-
-
-
-                        CLIENT_INFO(context, "****** homekit_run_server ***** Discon %s", context->disconnect ? "Yes!" : "No");
-
-
                     homekit_client_process(context);
                     triggered_nfds--;
                 }
 
                 context = context->next;
             }
-
-
-
-            DEBUG("\n\n");
-
-
 
             homekit_server_close_clients(server);
         }

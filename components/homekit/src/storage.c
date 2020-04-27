@@ -10,13 +10,8 @@
 
 #pragma GCC diagnostic ignored "-Wunused-value"
 
-#ifdef CONFIG_HOMEKIT_SPI_FLASH_BASE_ADDR
-#define SPIFLASH_BASE_ADDR CONFIG_HOMEKIT_SPI_FLASH_BASE_ADDR
-#endif
-#ifndef CONFIG_HOMEKIT_SPI_FLASH_BASE_ADDR
 #ifndef SPIFLASH_BASE_ADDR
 #define SPIFLASH_BASE_ADDR 0x200000
-#endif
 #endif
 
 #define MAGIC_OFFSET           0
@@ -188,7 +183,7 @@ static int compact_data() {
         return 0;
     }
 
-    if (homekit_storage_reset()) {
+    if (homekit_storage_reset() <= 0) {
         ERROR("Failed to compact HomeKit storage: error resetting flash");
         free(data);
         return -1;

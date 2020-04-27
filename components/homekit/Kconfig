@@ -1,8 +1,8 @@
 menu "HomeKit"
 
 config HOMEKIT_SPI_FLASH_BASE_ADDR
-    hex "SPI flash address for storing HomeKit data"
-    default 0x200000
+    string "SPI flash address for storing HomeKit data"
+    default "0x200000"
     help
         SPI flash address to store HomeKit related persisted data
 
@@ -19,7 +19,7 @@ config HOMEKIT_SMALL
     help
         Configures components to use smaller (but slower) implementations. Helps
         decrease firmware size ~70KB at cost of increasing pair verify time
-        
+
 config HOMEKIT_DEBUG
     bool "Debug output"
     default n

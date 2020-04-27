@@ -30,8 +30,9 @@ ESP_EVENT_DEFINE_BASE(HOMEKIT_EVENT);            // Convert esp-homekit events i
 
 
 #include "multipwm.h"
-#define PWM_PERIOD    (UINT16_MAX) //counts
-
+#define PWM_PERIOD          MULTIPWM_MAX_PERIOD         //counts
+#include "pwm.h"
+#define PWM_PERIOD_IN_US    MULTIPWM_MAX_PERIOD/80      // in microseconds
 
 
 // Have set lwip sockets from 10 to 16 (maximum allowed)
@@ -70,14 +71,12 @@ typedef struct {
     uint8_t idx;
     uint8_t button_gpio;
     uint8_t light_gpio;
-    uint16_t last_brightness;
 } light_service_t;
 
 static light_service_t light1 = {
     .idx = 1,
     .button_gpio = 0,
-    .light_gpio = 2,
-    .last_brightness = 100,
+    .light_gpio = 4,
 };
 
 
@@ -91,9 +90,8 @@ static led_status_t led_status;
 static bool paired = false;
 
 
-void led_init() {
-//    gpio_set_direction(status_led_gpio, GPIO_MODE_OUTPUT);
-    gpio_set_direction(light1.light_gpio, GPIO_MODE_OUTPUT);
+void status_led_init() {
+    gpio_set_direction(status_led_gpio, GPIO_MODE_OUTPUT);
 }
 
 void status_led_identify(homekit_value_t _value) {
@@ -115,20 +113,15 @@ void lightbulb_on_callback(homekit_characteristic_t *_ch, homekit_value_t value,
     ESP_LOGI(TAG, "Characteristic ON; Bool_val: %d, Brightness_val: %d, Set PWM: %d", 
             value.bool_value ? 1 : 0, 
             brightness->value.int_value, 
-            value.bool_value ? brightness->value.int_value * PWM_PERIOD/100 : 0);
+            value.bool_value ? brightness->value.int_value * PWM_PERIOD_IN_US/100 : 0);
 
 
     light_service_t light = *((light_service_t*) context);
 
-//    gpio_set_level(light.light_gpio, value.bool_value ? 0 : 1);
+    pwm_set_duty(0, value.bool_value ? brightness->value.int_value * PWM_PERIOD_IN_US/100 : 0);
+    pwm_start();
 
-//    pwm_set_duty(0, value.bool_value ? brightness->value.int_value * PWM_PERIOD/100 : 0);
-//    pwm_start();
-
-
-//    multipwm_stop(&pwm_info);
-    multipwm_set_duty(&pwm_info, 0, value.bool_value ? brightness->value.int_value * PWM_PERIOD/100 : 0);
-//    multipwm_start(&pwm_info);
+//    multipwm_set_duty(&pwm_info, 0, value.bool_value ? brightness->value.int_value * PWM_PERIOD/100 : 0);
 
 }
 homekit_characteristic_t lightbulb1_on = HOMEKIT_CHARACTERISTIC_(
@@ -145,17 +138,15 @@ void lightbulb_brightness_callback(homekit_characteristic_t *_ch, homekit_value_
 
     ESP_LOGI(TAG, "Characteristic BRIGHTNESS; Brightness_val: %d, Set PWM: %d", 
             value.int_value, 
-            value.int_value * PWM_PERIOD/100);
+            value.int_value * PWM_PERIOD_IN_US/100);
 
    
     light_service_t light = *((light_service_t*) context);
 
-//    pwm_set_duty(0, value.int_value * PWM_PERIOD/100);
-//    pwm_start();
+    pwm_set_duty(0, value.int_value * PWM_PERIOD_IN_US/100);
+    pwm_start();
 
-//    multipwm_stop(&pwm_info);
-    multipwm_set_duty(&pwm_info, 0, value.int_value * PWM_PERIOD/100);
-//    multipwm_start(&pwm_info);
+//    multipwm_set_duty(&pwm_info, 0, value.int_value * PWM_PERIOD/100);
 }
 homekit_characteristic_t lightbulb1_brightness = HOMEKIT_CHARACTERISTIC_(
     BRIGHTNESS, 100, .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
@@ -404,7 +395,7 @@ void app_main(void)
     create_accessory_name();
     homekit_server_init(&config);
 
-    led_init();
+    status_led_init();
 
     paired = homekit_is_paired();
     led_status = led_status_init(status_led_gpio, false);
@@ -418,19 +409,17 @@ void app_main(void)
 
     button_create(light1.button_gpio, button_config, button_callback, &light1.idx);
 
-/*
-    uint32_t duties = 100;
-    uint32_t pin_num = 2;
 
-    pwm_init(PWM_PERIOD, duties, 1, pin_num);
+    uint32_t pins[] = { light1.light_gpio };
+
+    uint32_t duties[] = { lightbulb1_on.value.bool_value ? lightbulb1_brightness.value.int_value * PWM_PERIOD_IN_US/100 : 0 };
+
+    pwm_init(PWM_PERIOD_IN_US, duties, 1, pins);    
     pwm_set_channel_invert(1);
-    pwm_set_phases(phase);                // throws an error if not set
+    pwm_set_phase(0, 0);                // throws an error if not set
     pwm_start();
 
-*/
-
-    uint8_t pins[] = { 2 };
-
+/*
     pwm_info.channels = 1;
     pwm_info.reverse = true;
 
@@ -439,9 +428,9 @@ void app_main(void)
     for (uint8_t i=0; i<pwm_info.channels; i++) {
         multipwm_set_pin(&pwm_info, i, pins[i]);
     }
+    multipwm_set_duty(&pwm_info, 0, lightbulb1_on.value.bool_value ? lightbulb1_brightness.value.int_value * PWM_PERIOD/100 : 0);
     multipwm_start(&pwm_info);
-
-
+*/
 
     const esp_partition_t *next = esp_ota_get_running_partition();
     esp_app_desc_t app_desc;

@@ -27,10 +27,11 @@ On Dev Board (like NodeMCU v3)
 Button config settings:
 * **active_level** - `BUTTON_ACTIVE_HIGH` or `BUTTON_ACTIVE_LOW` - which signal level corresponds to button press. In case of `BUTTON_ACTIVE_LOW`, it automatically enables pullup resistor on button pin. In case of `BUTTON_ACTIVE_HIGH`, you need to have an additional pulldown (pin-to-ground) resistor on button pin.
 * **repeat\_press_time** - defines maximum time in milliseconds to wait for subsequent press to consider it a multiple press (defaults to 300ms).
+* **long\_press_time** - defines time in milliseconds for press to be considered a long press. If not configured, a timer will not be created (saving resources).
 
 Implementation effectively handles debounce, no additional configuration is required.
 
-Example of using button with support of single, double and tripple presses:
+Example of usage
 
 ```c
 #include <button.h>

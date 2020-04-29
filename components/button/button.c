@@ -36,6 +36,7 @@ static void button_toggle_callback(button_t *button) {
 
     if (button->last_high == (button->config.active_level == BUTTON_ACTIVE_HIGH)) {
         // pressed
+        button->callback(BUTTON_EVENT_DOWN, button->context);
         button->press_count++;
         xTimerStart(button->repeat_press_timeout_timer, 1);
         if (button->config.long_press_time && button->press_count == 1) {
@@ -43,13 +44,14 @@ static void button_toggle_callback(button_t *button) {
         }
     } else {
         // released
+        button->callback(BUTTON_EVENT_UP, button->context);
         if (button->long_press_timer
                 && xTimerIsTimerActive(button->long_press_timer)) {
             xTimerStop(button->long_press_timer, 1);
         }
         if (button->repeat_press_timeout_timer
                     && !xTimerIsTimerActive(button->repeat_press_timeout_timer)) {
-            button->callback(BUTTON_EVENT_UP, button->context);
+            button->callback(BUTTON_EVENT_UP_HOLD, button->context);
         }
     }
 }
@@ -68,7 +70,7 @@ static void button_repeat_press_timeout_timer_callback(TimerHandle_t timer) {
     // if it's still being pressed, then it's not a momentary press, it's 
     //  a 'press down and hold'
     if (button->last_high == (button->config.active_level == BUTTON_ACTIVE_HIGH)) {
-        button->callback(BUTTON_EVENT_DOWN, button->context);
+        button->callback(BUTTON_EVENT_DOWN_HOLD, button->context);
     } else {
         button->callback(button->press_count, button->context);
     }
@@ -156,8 +158,7 @@ int button_create(const uint8_t gpio_num,
     button->config = config;
     button->callback = callback;
     button->context = context;
-    button->last_high = gpio_get_level(button->gpio_num) == 1;
-
+ 
 
     button->repeat_press_timeout_timer = xTimerCreate(
         "Button Repeat Timeout Timer", pdMS_TO_TICKS(config.repeat_press_timeout),
@@ -179,12 +180,12 @@ int button_create(const uint8_t gpio_num,
         }
     }
 
-    gpio_set_direction(button->gpio_num, GPIO_MODE_INPUT);
-    if (config.active_level == BUTTON_ACTIVE_LOW) {
-        gpio_set_pull_mode(button->gpio_num, GPIO_PULLUP_ONLY);
-    } else {
-        gpio_set_pull_mode(button->gpio_num, GPIO_PULLDOWN_ONLY);
-    }
+    gpio_config_t io_conf = {0};
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = (1ULL<<button->gpio_num);
+    gpio_config(&io_conf);
+
+    button->last_high = gpio_get_level(button->gpio_num) == 1;
 
     xSemaphoreTake(buttons_lock, portMAX_DELAY);
 

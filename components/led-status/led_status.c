@@ -70,7 +70,11 @@ led_status_t *led_status_init(uint8_t gpio, uint8_t active_level) {
         "Toggle timer", 100, pdFALSE, status, led_status_tick_callback
     );
 
-    gpio_set_direction(status->gpio, GPIO_MODE_OUTPUT);
+    gpio_config_t io_conf = {0};
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    io_conf.pin_bit_mask = (1ULL<<status->gpio);
+    gpio_config(&io_conf);
+
     led_status_write(status, false);
 
     return status;

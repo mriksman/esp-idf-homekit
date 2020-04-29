@@ -1,14 +1,3 @@
-/*  Pull-ups and pull-downs are not enabled by default. If they are required, call
- *    gpio_set_pull_mode(gpio_num, GPIO_PULLUP_ONLY)
- *    gpio_set_pull_mode(gpio_num, GPIO_PULLDOWN_ONLY)
- *  after the button is created.
- *
- *  Note: ESP8266 - only GPIO0-15 can be pulled up internally
- *                  only GPIO16 can be pulled down internally (can be pull-up externally)
- *   On Dev Board - GPIO15 is pulled low externally 
- *                  GPIO0 and GPIO2 are pulled high externally
- */
-
 #pragma once
 
 #ifdef __cplusplus

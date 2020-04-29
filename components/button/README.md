@@ -11,25 +11,21 @@ There are two ways to wire button:
 
 * active low - signal connects to ground when button is pressed
 
-```c
-#include <button.h>
-
-#define BUTTON_PIN 5
-
-void button_callback(button_event_t event, void* context) {
-    printf("button press\n");
-}
-
-button_config_t config = BUTTON_CONFIG(button_active_high);
-
-int r = button_create(BUTTON_PIN, config, button_callback, NULL);
-if (r) {
-    printf("Failed to initialize a button\n");
-}
+Pull-ups and pull-downs are not enabled by default. If they are required, call either
 ```
+gpio_set_pull_mode(gpio_num, GPIO_PULLUP_ONLY)
+gpio_set_pull_mode(gpio_num, GPIO_PULLDOWN_ONLY)
+```
+after the button is created.
+Note: ESP8266
+* only GPIO0-15 can be pulled up internally
+* only GPIO16 can be pulled down internally (can be pull-up externally)
+On Dev Board (like NodeMCU v3)
+* GPIO15 is pulled low externally 
+* GPIO0 and GPIO2 are pulled high externally
 
 Button config settings:
-* **active_level** - `button_active_high` or `button_active_low` - which signal level corresponds to button press. In case of `button_active_low`, it automatically enables pullup resistor on button pin. In case of `button_active_high`, you need to have an additional pulldown (pin-to-ground) resistor on button pin.
+* **active_level** - `BUTTON_ACTIVE_HIGH` or `BUTTON_ACTIVE_LOW` - which signal level corresponds to button press. In case of `BUTTON_ACTIVE_LOW`, it automatically enables pullup resistor on button pin. In case of `BUTTON_ACTIVE_HIGH`, you need to have an additional pulldown (pin-to-ground) resistor on button pin.
 * **repeat\_press_time** - defines maximum time in milliseconds to wait for subsequent press to consider it a multiple press (defaults to 300ms).
 
 Implementation effectively handles debounce, no additional configuration is required.
@@ -42,26 +38,44 @@ Example of using button with support of single, double and tripple presses:
 #define BUTTON_PIN 5
 
 void button_callback(button_event_t event, void* context) {
-    int button_idx = *((uint8_t*) context);
+    uint8_t button_idx = *((uint8_t*) context);
 
-    switch (event) {
-        case button_event_down:
-            // Can start timers here to determine 'long press' (if required)
-            ESP_LOGI(TAG, "button %d down", button_idx);
-            break;
-        case button_event_up:
-            ESP_LOGI(TAG, "button %d up", button_idx);
-            break;
-        default:
-            ESP_LOGI(TAG, "button %d pressed %d times", button_idx, event);
+    if (event_id == BUTTON_EVENT_DOWN) {
+        ESP_LOGI(TAG, "button %d down", button_idx);
+    }
+    else if (event_id == BUTTON_EVENT_UP) {
+        ESP_LOGI(TAG, "button %d up", button_idx);
+    }
+
+    else if (event_id == BUTTON_EVENT_DOWN_HOLD) {
+        ESP_LOGI(TAG, "button %d being held down", button_idx);
+    }
+    else if (event_id == BUTTON_EVENT_UP_HOLD) {
+        ESP_LOGI(TAG, "button %d released from being held down", button_idx);
+    }
+
+    else if (event_id == BUTTON_EVENT_LONG_PRESS) {
+        ESP_LOGI(TAG, "button %d long press", button_idx);
+    }
+    else {
+        if (event_id == 1) {
+            ESP_LOGI(TAG, "button %d pressed once", button_idx);
+        } 
+        else if (event_id == 2) {
+            ESP_LOGI(TAG, "button %d pressed twice", button_idx);
+        } 
     }
 }
 
-button_config_t config = BUTTON_CONFIG(
-    button_active_high,
+button_config_t button_config = BUTTON_CONFIG(
+    BUTTON_ACTIVE_LOW,
+    .repeat_press_timeout = 300,
+    .long_press_time = 10000,
 );
 
-int r = button_create(BUTTON_PIN, config, button_callback, NULL);
+int button_idx = 1;
+
+int r = button_create(BUTTON_PIN, config, button_callback, &button_idx);
 if (r) {
     printf("Failed to initialize a button\n");
 }

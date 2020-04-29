@@ -8,7 +8,6 @@ Based heavily on https://github.com/maximkulkin/esp-button
 Before you start using library, you need to figure out how button is/will be wired.
 There are two ways to wire button:
 * active high - signal goes from low to high when button is pressed
-
 * active low - signal connects to ground when button is pressed
 
 Pull-ups and pull-downs are not enabled by default. If they are required, call either
@@ -20,6 +19,7 @@ after the button is created.
 Note: ESP8266
 * only GPIO0-15 can be pulled up internally
 * only GPIO16 can be pulled down internally (can be pull-up externally)
+
 On Dev Board (like NodeMCU v3)
 * GPIO15 is pulled low externally 
 * GPIO0 and GPIO2 are pulled high externally

@@ -6,8 +6,8 @@ extern "C" {
 
 #include <esp_http_server.h>
 
-httpd_handle_t start_webserver(void);
-void stop_webserver(httpd_handle_t server);
+esp_err_t start_webserver(void);
+void stop_webserver(void);
 
 #define MAX_AP_COUNT 10
 

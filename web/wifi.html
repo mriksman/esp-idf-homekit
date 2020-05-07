@@ -52,6 +52,10 @@
 						</div>
 
 
+						<div class="log_output_border">
+							<div id="log_output"></div>
+						</div>
+						
 						
 					</div>
 				</div>
@@ -66,10 +70,6 @@
 						</ul>
 					</div>
 				</div>
-				
-				
-				
-				
 				
 			</div>
 			<div id="connect" class="slider closed">
@@ -125,6 +125,8 @@
 		
 	
 		</div>
+		
+		
 
 
 		<div id="modal-overlay" class="modal-overlay closed"></div>
@@ -411,7 +413,37 @@
 				});
 			}			
 			
-			
+			document.addEventListener("DOMContentLoaded", function() {
+				if (window.EventSource == undefined) {
+					document.getElementById('log_output').innerHTML = "Your browser doesn't support Server Side Events."; 
+					return;
+				}
+				var source = new EventSource('event');
+				source.onopen = function (event) {
+					document.getElementById('log_output').innerHTML += 'Connection Opened.<br>';
+				};
+				source.onerror = function (event) {
+					if (event.eventPhase == EventSource.CLOSED) {  
+						document.getElementById('log_output').innerHTML += 'Connection Closed.<br>';  
+					}
+				};
+				source.onmessage = function (event) { 
+					var data_str;
+					var objDiv = document.getElementById('log_output');
+					var scroll_to_bottom = false;
+					if (objDiv.scrollTop >= objDiv.scrollHeight - objDiv.clientHeight) {
+						scroll_to_bottom = true;
+					}
+					data_str = event.data.replace("[0;31m", "<span style='color:red'>");
+					data_str = data_str.replace("[0;32m", "<span style='color:green'>");
+					data_str = data_str.replace("[0;33m", "<span style='color:yellow'>");
+					data_str = data_str.replace("[0m", "</span>");
+					objDiv.innerHTML += data_str + '<br>';
+					if (scroll_to_bottom) {
+						objDiv.scrollTop = objDiv.scrollHeight;
+					}
+				};
+			});
 			
 		</script>
 		<style>
@@ -583,6 +615,26 @@
 				width: 100%;
 				box-sizing: border-box;		/* includes padding in width calcs */
 			}
+
+			.log_output_border {
+				display: flex;
+				border: 1px solid #888;
+				padding:5px;
+				margin :5px;
+				background-color: black;
+			}
+			#log_output {
+				font: 0.6em courier;
+				color: LightGray;
+				overflow: auto; 
+				height:100px; 
+				width: 100%;
+				white-space: nowrap;
+			}
+			#log_output::-webkit-scrollbar {
+			  display: none;
+			}
+
 
 			/* Modal dialog box */
 			.modal {

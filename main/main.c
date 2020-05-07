@@ -34,12 +34,9 @@ ESP_EVENT_DEFINE_BASE(HOMEKIT_EVENT);           // Convert esp-homekit events in
 #include "esp_log.h"
 static const char *TAG = "main";
 
-
 // Have set lwip sockets from 10 to 16 (maximum allowed)
 //   5 for httpd (down from default of 7)
 //   12 for HomeKit (up from 8)
-
-
 
 static led_status_t led_status;
 static bool paired = false;
@@ -53,13 +50,11 @@ static led_status_pattern_t identify = LED_STATUS_PATTERN({100, -100, 100, -350,
 #define MAX(a, b) (((a) < (b)) ? (b) : (a))
 
 
-
 // *** Included to show app_desc_t from partition ***
 #include "esp_app_format.h"
 #include "esp_ota_ops.h"
 #include "esp_image_format.h"
 // **************************************************
-
 
 
 homekit_characteristic_t lightbulb1_on;
@@ -290,7 +285,7 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
             // STATELESS_PROGRAMMABLE_SWITCH supports single, double and long press events
             ESP_LOGI(TAG, "button %d long press event. start AP", light_idx);  
             //start_ap_prov();        
-//            xTaskCreate(&start_ap_task, "Start AP", 1536, NULL, tskIDLE_PRIORITY, NULL);
+            xTaskCreate(&start_ap_task, "Start AP", 1536, NULL, tskIDLE_PRIORITY, NULL);
         }
         else {
             if (event_id == 1) {

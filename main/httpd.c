@@ -6,6 +6,7 @@
 #include "esp_wifi.h"
 #include "cJSON.h"
 #include "nvs_flash.h"
+#include "lwip/sockets.h"
 
 #include "wifi.h"
 #include "httpd.h"
@@ -15,6 +16,130 @@
 static const char *TAG = "myhttpd";
 
 #define SCRATCH_BUFSIZE 1024
+
+static httpd_handle_t server = NULL;
+
+#define LOG_BUF_MAX_LINE_SIZE 120
+char log_buf[LOG_BUF_MAX_LINE_SIZE];
+static QueueHandle_t q_sse_message_queue;
+static putchar_like_t old_function = NULL;
+
+// set volatile as a client could be removed at any time and the sse_task needs to make sure it has an updated copy
+#define MAX_SSE_CLIENTS 2
+volatile int sse_sockets[MAX_SSE_CLIENTS];
+
+
+int sse_logging_putchar(int chr) {
+    if(chr == '\n'){
+        // send without the '\n'
+        xQueueSendToBack(q_sse_message_queue, log_buf, 0);
+        // 'clear' string
+        log_buf[0] = '\0';    
+    } else {
+        size_t len = strlen(log_buf);
+        if (len < LOG_BUF_MAX_LINE_SIZE - 1) {
+            log_buf[len] = chr;
+            log_buf[len+1] = '\0';
+        }
+    }
+    // still send to console
+	return old_function( chr );
+}
+
+static void sse_task(void * param)
+{
+    const char *sse_begin = "data: ";
+    const char *sse_end_message = "\n\n";
+    char recv_buf[LOG_BUF_MAX_LINE_SIZE + strlen(sse_begin) + strlen(sse_end_message)];
+    strcpy(recv_buf, sse_begin);
+    int return_code;
+
+    while(1) {
+        if (xQueueReceive(q_sse_message_queue, recv_buf + strlen(sse_begin), portMAX_DELAY) == pdTRUE) {
+            strcat(recv_buf, sse_end_message);
+            for (int i = 0; i < MAX_SSE_CLIENTS; i++) {
+                if (sse_sockets[i] != 0) {
+                    return_code = send(sse_sockets[i], recv_buf, strlen(recv_buf), 0);
+                    if (return_code < 0) {
+                         httpd_sess_trigger_close(server, sse_sockets[i]);
+                    }
+                }
+            } //for
+        } // if
+    } //while
+}
+
+void free_sse_ctx_func(void *ctx)
+{
+    int client_fd = *((int*) ctx);
+
+    ESP_LOGI(TAG, "FREE sse_socket: %d", client_fd);
+
+    for (int i = 0; i < MAX_SSE_CLIENTS; i++) {
+        if (sse_sockets[i] == client_fd) {
+            sse_sockets[i] = 0;
+        }
+    } 
+    free(ctx);
+}
+
+esp_err_t server_side_sevent_registration_handler(httpd_req_t *req)
+{
+    // disable sending to sse_socket until a proper HTTP 200 OK response has been sent back to client
+    old_function = esp_log_set_putchar(old_function);
+
+    int client_fd = httpd_req_to_sockfd(req);
+    int len;
+    char buffer[150];
+    int i = 0;
+
+    /* Create session's context if not already available */
+    if (!req->sess_ctx) {
+        for (i = 0; i < MAX_SSE_CLIENTS; i++) {
+            if (sse_sockets[i] == 0) {
+                req->sess_ctx = malloc(sizeof(int)); 
+                req->free_ctx = free_sse_ctx_func;   
+                *(int *)req->sess_ctx = client_fd;
+                sse_sockets[i] = client_fd;
+                ESP_LOGI(TAG, "sse_socket: %d slot %d pointer sess_ctx %p", sse_sockets[i], i, req->sess_ctx);
+                break;
+            }
+        }
+        if (i == MAX_SSE_CLIENTS) {
+            len = sprintf(buffer, "HTTP/1.1 503 Server Busy\r\nContent-Length: 0\r\n\r\n");
+        }
+        else {
+            len = sprintf(buffer, "HTTP/1.1 200 OK\r\n"
+                                    "Connection: Keep-Alive\r\n"
+                                    "Content-Type: text/event-stream\r\n"
+                                    "Cache-Control: no-cache\r\n\r\n");
+        }
+    } else {
+        // Should never get here?
+        len = sprintf(buffer, "HTTP/1.1 400 Session Already Active\r\n\r\n");
+    }
+
+
+    // need to send raw data, as httpd_resp_send will add Content-Length: 0 which
+    // will make the client disconnect
+    httpd_send(req, buffer, len);
+
+    // enable sse logging again
+    old_function = esp_log_set_putchar(old_function);  
+    
+
+    return ESP_OK;
+}
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -244,9 +369,9 @@ esp_err_t status_json_handler(httpd_req_t *req)
 
 
 
-httpd_handle_t start_webserver(void)
+esp_err_t start_webserver(void)
 {
-    httpd_handle_t server = NULL;
+
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_open_sockets = 5;
     // kick off any old socket connections to allow new connections
@@ -298,14 +423,29 @@ httpd_handle_t start_webserver(void)
         };
         httpd_register_uri_handler(server, &restart_json_page);
 
-        return server;
+        httpd_uri_t server_side_sevent_registration_page = {
+            .uri       = "/event",
+            .method    = HTTP_GET,
+            .handler   = server_side_sevent_registration_handler,
+            .user_ctx  = NULL
+        };
+        httpd_register_uri_handler(server, &server_side_sevent_registration_page);
+
+        // Task to accept messages from queue and send to SSE clients
+        xTaskCreate(&sse_task, "sse", 2048, NULL, 4, NULL);
+        q_sse_message_queue = xQueueCreate( 10, sizeof(char)*LOG_BUF_MAX_LINE_SIZE );
+
+        old_function = esp_log_set_putchar(&sse_logging_putchar);
+
+
+        return ESP_OK;
     }
 
     ESP_LOGI(TAG, "Error starting server!");
-    return NULL;
+    return ESP_FAIL;
 }
 
-void stop_webserver(httpd_handle_t server)
+void stop_webserver(void)
 {
     // Stop the httpd server
     httpd_stop(server);

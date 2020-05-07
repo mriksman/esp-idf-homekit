@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
+from time import sleep
+
 import os
 import os.path
 import logging
@@ -56,4 +58,13 @@ def restart_json():
         # The request body wasn't JSON so return a 400 HTTP status code
         return "Request was not JSON", 400
 		
+@app.route("/event")
+def stream():
+    def eventStream():
+        while True:
+            yield "data: thisddddddddddd ddddddddddddd cccccccccccc bbbbbbbbb  aaaaaaa gggggggggg ddddddddd eeeeeeeeeee wwwwwwwww\n\n"
+            sleep(1)
+    
+    return Response(eventStream(), mimetype="text/event-stream")
+
 app.run(host='0.0.0.0', debug=True)

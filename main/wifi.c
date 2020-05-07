@@ -18,7 +18,6 @@
 #include "esp_log.h"                            // For ESP_LOGI
 static const char *TAG = "mywifi";
 
-#define MAXIMUM_RETRY               4
 static int s_retry_num = 0;
 
 //static esp_timer_handle_t s_wifi_reconnect_timer;
@@ -134,8 +133,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 }
 
 
-httpd_handle_t server = NULL;
-
 void start_ap_prov() {
     wifi_config_t wifi_cfg;
     ESP_ERROR_CHECK(esp_wifi_get_config(ESP_IF_WIFI_AP, &wifi_cfg));
@@ -159,7 +156,8 @@ void start_ap_prov() {
         ESP_LOGW(TAG, "No previous SSID found. Set to ssid %s  ", (const char*) wifi_ap_config.ap.ssid);
     }
 
-    server = start_webserver();
+//    esp_err_t err;
+    start_webserver();
         
     ESP_LOGI(TAG, "Started softAP and HTTPD Service");
 
@@ -168,7 +166,7 @@ void start_ap_prov() {
 void stop_ap_prov() {
     // Shutdown soft AP
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    stop_webserver(server);
+    stop_webserver();
 
     ESP_LOGI(TAG, "Stopped softAP and HTTPD Service");
 

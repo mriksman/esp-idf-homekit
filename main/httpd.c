@@ -19,13 +19,19 @@ static const char *TAG = "myhttpd";
 
 static httpd_handle_t server = NULL;
 
+#ifdef CONFIG_IDF_TARGET_ESP32
+    esp_event_handler_instance_t wifi_event_handler_instance;
+    esp_event_handler_instance_t ip_event_handler_instance;
+#endif
+
 #define LOG_BUF_MAX_LINE_SIZE 120
 char log_buf[LOG_BUF_MAX_LINE_SIZE];
+static TaskHandle_t t_sse_task_handle;
 static QueueHandle_t q_sse_message_queue;
 static putchar_like_t old_function = NULL;
 
-// set volatile as a client could be removed at any time and the sse_task needs to make sure it has an updated copy
-#define MAX_SSE_CLIENTS 2
+// set volatile as a client could be removed at any time and the sse_logging_task needs to make sure it has an updated copy
+#define MAX_SSE_CLIENTS 3
 volatile int sse_sockets[MAX_SSE_CLIENTS];
 
 
@@ -46,7 +52,7 @@ int sse_logging_putchar(int chr) {
 	return old_function( chr );
 }
 
-static void sse_task(void * param)
+static void sse_logging_task(void * param)
 {
     const char *sse_begin = "data: ";
     const char *sse_end_message = "\n\n";
@@ -69,11 +75,75 @@ static void sse_task(void * param)
     } //while
 }
 
+static void status_json_sse_handler()
+{
+    char ip_buf[17];
+    char *out;
+    cJSON *root;
+    root = cJSON_CreateObject();
+
+    wifi_config_t wifi_cfg;
+    esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_cfg);
+
+    #ifdef CONFIG_IDF_TARGET_ESP32
+        esp_netif_ip_info_t ip_info;
+        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        esp_netif_get_ip_info(esp_netif, &ip_info)
+        bool if_status = esp_netif_is_netif_up(esp_netif);
+    #elif CONFIG_IDF_TARGET_ESP8266
+        tcpip_adapter_ip_info_t ip_info;
+        ESP_ERROR_CHECK(tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info));
+        bool if_status = tcpip_adapter_is_netif_up(TCPIP_ADAPTER_IF_STA);
+    #endif
+
+    cJSON_AddItemToObject(root, "ssid", cJSON_CreateString((const char *)wifi_cfg.sta.ssid));
+    snprintf(ip_buf, 17, IPSTR, IP2STR(&ip_info.ip));
+    cJSON_AddItemToObject(root, "ip", cJSON_CreateString(ip_buf));
+    snprintf(ip_buf, 17, IPSTR, IP2STR(&ip_info.netmask));
+    cJSON_AddItemToObject(root, "netmask", cJSON_CreateString(ip_buf));
+    snprintf(ip_buf, 17, IPSTR, IP2STR(&ip_info.gw));
+    cJSON_AddItemToObject(root, "gw", cJSON_CreateString(ip_buf));
+    cJSON_AddItemToObject(root, "if_status", cJSON_CreateBool(if_status));
+
+ 
+    out = cJSON_PrintUnformatted(root);
+
+    ESP_LOGI(TAG, "ssid: %s, ip:"IPSTR", netmask:"IPSTR", gw:"IPSTR", if_up? %s",
+        wifi_cfg.sta.ssid, IP2STR(&ip_info.ip), IP2STR(&ip_info.netmask), IP2STR(&ip_info.gw), if_status?"TRUE":"FALSE");
+
+    const char *sse_begin = "event: status\ndata: ";
+    const char *sse_end_message = "\n\n";
+    char recv_buf[strlen(out) + strlen(sse_begin) + strlen(sse_end_message)];
+    strcpy(recv_buf, sse_begin);
+    strcat(recv_buf, out);
+    strcat(recv_buf, sse_end_message);
+
+    int return_code;
+    for (int i = 0; i < MAX_SSE_CLIENTS; i++) {
+        if (sse_sockets[i] != 0) {
+            return_code = send(sse_sockets[i], recv_buf, strlen(recv_buf), 0);
+            if (return_code < 0) {
+                    httpd_sess_trigger_close(server, sse_sockets[i]);
+            }
+        }
+    }
+
+    /* free all objects under root and root itself */
+    cJSON_Delete(root);
+    free(out);
+
+}
+
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+                                    int32_t event_id, void* event_data) {
+    status_json_sse_handler();
+}
+
 void free_sse_ctx_func(void *ctx)
 {
     int client_fd = *((int*) ctx);
 
-    ESP_LOGI(TAG, "FREE sse_socket: %d", client_fd);
+    ESP_LOGD(TAG, "free_sse_context sse_socket: %d", client_fd);
 
     for (int i = 0; i < MAX_SSE_CLIENTS; i++) {
         if (sse_sockets[i] == client_fd) {
@@ -101,7 +171,7 @@ esp_err_t server_side_sevent_registration_handler(httpd_req_t *req)
                 req->free_ctx = free_sse_ctx_func;   
                 *(int *)req->sess_ctx = client_fd;
                 sse_sockets[i] = client_fd;
-                ESP_LOGI(TAG, "sse_socket: %d slot %d pointer sess_ctx %p", sse_sockets[i], i, req->sess_ctx);
+                ESP_LOGD(TAG, "sse_socket: %d slot %d", sse_sockets[i], i);
                 break;
             }
         }
@@ -119,29 +189,18 @@ esp_err_t server_side_sevent_registration_handler(httpd_req_t *req)
         len = sprintf(buffer, "HTTP/1.1 400 Session Already Active\r\n\r\n");
     }
 
-
-    // need to send raw data, as httpd_resp_send will add Content-Length: 0 which
+    // need to use raw send function, as httpd_resp_send will add Content-Length: 0 which
     // will make the client disconnect
     httpd_send(req, buffer, len);
 
+    // send first wi-fi status information;
+    status_json_sse_handler();
+
     // enable sse logging again
     old_function = esp_log_set_putchar(old_function);  
-    
 
     return ESP_OK;
 }
-
-
-
-
-
-
-
-
-
-
-
-
 
 esp_err_t root_handler(httpd_req_t *req)
 {
@@ -185,7 +244,7 @@ esp_err_t ap_json_handler(httpd_req_t *req)
         ESP_LOGI(TAG, "Scan or connect in progress");
     }
 
-    out = cJSON_Print(root);
+    out = cJSON_PrintUnformatted(root);
    
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
@@ -235,8 +294,6 @@ esp_err_t connect_json_handler(httpd_req_t *req)
     cJSON *root = cJSON_Parse(buf);
     cJSON *ssid = cJSON_GetObjectItem(root, "ssid");
     cJSON *pwd = cJSON_GetObjectItem(root, "password");
-
-    ESP_LOGI(TAG, "SSID = %s, Password = %s", ssid->valuestring, pwd->valuestring);
 
     wifi_config_t wifi_cfg;
     esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_cfg);
@@ -318,57 +375,6 @@ esp_err_t restart_json_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-esp_err_t status_json_handler(httpd_req_t *req)
-{
-    char ip_buf[17];
-    char *out;
-    cJSON *root;
-    root = cJSON_CreateObject();
-
-    wifi_config_t wifi_cfg;
-    esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_cfg);
-
-
-    #ifdef CONFIG_IDF_TARGET_ESP32
-        esp_netif_ip_info_t ip_info;
-        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-        esp_netif_get_ip_info(esp_netif, &ip_info)
-        bool if_status = esp_netif_is_netif_up(esp_netif);
-    #elif CONFIG_IDF_TARGET_ESP8266
-        tcpip_adapter_ip_info_t ip_info;
-        ESP_ERROR_CHECK(tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info));
-        bool if_status = tcpip_adapter_is_netif_up(TCPIP_ADAPTER_IF_STA);
-    #endif
-
-    cJSON_AddItemToObject(root, "ssid", cJSON_CreateString((const char *)wifi_cfg.sta.ssid));
-    snprintf(ip_buf, 17, IPSTR, IP2STR(&ip_info.ip));
-    cJSON_AddItemToObject(root, "ip", cJSON_CreateString(ip_buf));
-    snprintf(ip_buf, 17, IPSTR, IP2STR(&ip_info.netmask));
-    cJSON_AddItemToObject(root, "netmask", cJSON_CreateString(ip_buf));
-    snprintf(ip_buf, 17, IPSTR, IP2STR(&ip_info.gw));
-    cJSON_AddItemToObject(root, "gw", cJSON_CreateString(ip_buf));
-    cJSON_AddItemToObject(root, "if_status", cJSON_CreateBool(if_status));
-
- 
-    out = cJSON_Print(root);
-
-    ESP_LOGI(TAG, "ssid: %s, ip:"IPSTR", netmask:"IPSTR", gw:"IPSTR", if_up? %s",
-        wifi_cfg.sta.ssid, IP2STR(&ip_info.ip), IP2STR(&ip_info.netmask), IP2STR(&ip_info.gw), if_status?"TRUE":"FALSE");
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
-    httpd_resp_set_hdr(req, "Pragma", "no-cache");
-    httpd_resp_send(req, out, strlen(out));      
-
-    /* free all objects under root and root itself */
-    cJSON_Delete(root);
-    free(out);
-
-    return ESP_OK;
-}
-
-
-
 esp_err_t start_webserver(void)
 {
 
@@ -399,14 +405,6 @@ esp_err_t start_webserver(void)
         };
         httpd_register_uri_handler(server, &ap_json_page);
 
-        httpd_uri_t status_json_page = {
-            .uri       = "/status.json",
-            .method    = HTTP_GET,
-            .handler   = status_json_handler,
-            .user_ctx  = NULL
-        };
-        httpd_register_uri_handler(server, &status_json_page);
-
         httpd_uri_t connect_json_page = {
             .uri       = "/connect.json",
             .method    = HTTP_POST,
@@ -431,22 +429,43 @@ esp_err_t start_webserver(void)
         };
         httpd_register_uri_handler(server, &server_side_sevent_registration_page);
 
+        // esp_event_handler_register is being deprecated
+        #ifdef CONFIG_IDF_TARGET_ESP32
+            ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL, &wifi_event_handler_instance));
+            ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL, &ip_event_handler_instance));
+        #elif CONFIG_IDF_TARGET_ESP8266
+            ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL));
+            ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL));
+        #endif
+        
         // Task to accept messages from queue and send to SSE clients
-        xTaskCreate(&sse_task, "sse", 2048, NULL, 4, NULL);
         q_sse_message_queue = xQueueCreate( 10, sizeof(char)*LOG_BUF_MAX_LINE_SIZE );
+        xTaskCreate(&sse_logging_task, "sse", 2048, NULL, 4, &t_sse_task_handle);
 
         old_function = esp_log_set_putchar(&sse_logging_putchar);
-
 
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Error starting server!");
+    ESP_LOGE(TAG, "Error starting server!");
     return ESP_FAIL;
 }
 
 void stop_webserver(void)
 {
+    // esp_event_handler_register is being deprecated
+    #ifdef CONFIG_IDF_TARGET_ESP32
+        ESP_ERROR_CHECK(esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler_instance));
+        ESP_ERROR_CHECK(esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID, &ip_event_handler_instance));
+    #elif CONFIG_IDF_TARGET_ESP8266
+        ESP_ERROR_CHECK(esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler));
+        ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler));
+    #endif
+    
+    esp_log_set_putchar(old_function);
+    vTaskDelete(t_sse_task_handle);
+    vQueueDelete(q_sse_message_queue);
+
     // Stop the httpd server
     httpd_stop(server);
 }

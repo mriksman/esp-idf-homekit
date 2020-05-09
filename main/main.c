@@ -22,7 +22,6 @@ ESP_EVENT_DEFINE_BASE(BUTTON_EVENT);            // Convert button events into es
 
 #include <homekit/homekit.h>
 #include <homekit/characteristics.h>
-
 #ifdef CONFIG_IDF_TARGET_ESP8266
 #include "mdns.h"                               // ESP8266 RTOS SDK mDNS needs legacy STATUS_EVENT to be sent to it
 #endif
@@ -41,9 +40,10 @@ static const char *TAG = "main";
 static led_status_t led_status;
 static bool paired = false;
 
-static led_status_pattern_t not_normal = LED_STATUS_PATTERN({1000, -1000});
+static led_status_pattern_t ap_mode = LED_STATUS_PATTERN({1000, -1000});
+static led_status_pattern_t not_paired = LED_STATUS_PATTERN({100, -100});
 static led_status_pattern_t pairing = LED_STATUS_PATTERN({100, -100, 100, -600});
-static led_status_pattern_t normal_mode = LED_STATUS_PATTERN({100, -9900});
+static led_status_pattern_t normal_mode = LED_STATUS_PATTERN({5, -9995});
 static led_status_pattern_t identify = LED_STATUS_PATTERN({100, -100, 100, -350, 100, -100, 100, -350, 100, -100, 100, -350});
 
 #define MIN(a, b) (((b) < (a)) ? (b) : (a))
@@ -233,18 +233,18 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT) {
         if (event_id == WIFI_EVENT_AP_START || event_id == WIFI_EVENT_STA_DISCONNECTED) {
-            led_status_set(led_status, &not_normal);
+            led_status_set(led_status, &ap_mode);
         } else if (event_id == WIFI_EVENT_AP_STOP) {
-            led_status_set(led_status, paired ? &normal_mode : &not_normal);
+            led_status_set(led_status, paired ? &normal_mode : &not_paired);
         } 
     } else if (event_base == IP_EVENT) {
         if (event_id == IP_EVENT_STA_GOT_IP) {
             wifi_mode_t wifi_mode;
             esp_wifi_get_mode(&wifi_mode);
             if (wifi_mode == WIFI_MODE_STA) {
-                led_status_set(led_status, paired ? &normal_mode : &not_normal);
+                led_status_set(led_status, paired ? &normal_mode : &not_paired);
             } else {
-                led_status_set(led_status, &not_normal);
+                led_status_set(led_status, &ap_mode);
             }
         }
     } else if (event_base == HOMEKIT_EVENT) {
@@ -256,12 +256,12 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
         else if (event_id == HOMEKIT_EVENT_CLIENT_DISCONNECTED) {
             ESP_LOGI(TAG, "HOMEKIT_EVENT_CLIENT_DISCONNECTED");
             if (!paired)
-                led_status_set(led_status, &not_normal);
+                led_status_set(led_status, &not_paired);
         }
         else if (event_id == HOMEKIT_EVENT_PAIRING_ADDED || event_id == HOMEKIT_EVENT_PAIRING_REMOVED) {
             ESP_LOGI(TAG, "HOMEKIT_EVENT_PAIRING_ADDED or HOMEKIT_EVENT_PAIRING_REMOVED");
             paired = homekit_is_paired();
-            led_status_set(led_status, paired ? &normal_mode : &not_normal);
+            led_status_set(led_status, paired ? &normal_mode : &not_paired);
         }
     } else if (event_base == BUTTON_EVENT) {
         uint8_t light_idx = *((uint8_t*) event_data);

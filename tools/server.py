@@ -61,9 +61,13 @@ def restart_json():
 @app.route("/event")
 def stream():
     def eventStream():
-        while True:
-            yield "data: thisddddddddddd ddddddddddddd cccccccccccc bbbbbbbbb  aaaaaaa gggggggggg ddddddddd eeeeeeeeeee wwwwwwwww\n\n"
-            sleep(1)
+        with app.app_context():
+            while True:
+                yield "data: this is a really long debug string that will be longer than the width of the log display\n\n"
+                with open(base_path+'\\tools\\status.json') as json_file:
+	                data = json.loads(json_file.read())	
+                yield "event: status\ndata:" + json.dumps(data) + "\n\n"
+                sleep(5)
     
     return Response(eventStream(), mimetype="text/event-stream")
 

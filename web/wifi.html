@@ -129,8 +129,8 @@
 		
 
 
-		<div id="modal-overlay" class="modal-overlay closed"></div>
-		<div id="modal" class="modal closed" >
+		<div id="modal-overlay" class="modal-overlay modal_closed"></div>
+		<div id="modal" class="modal modal_closed" >
 			  <div class="modal-guts">
 				<h1></h1>
 				<p></p>
@@ -146,17 +146,10 @@
 
 		<script type="text/javascript">
 			var selectedSSID = "";
-			
-//			const refreshAPInterval = 13000; 
-			const checkStatusInterval = 7000;
-//			var refreshAPTimer;
-			var checkStatusTimer;
-			
+						
 			var counter = 0;
 			var connectAttempt = false;
 			
-			checkStatusTimer = setInterval(checkStatus, checkStatusInterval);
-//			refreshAPTimer = setInterval(refreshAP, refreshAPInterval);
 			refreshAP();
 			
 			document.querySelector("#wifi-status .ape").addEventListener("click", (e) => { 
@@ -205,7 +198,7 @@
 			document.querySelector('#settings .buttons .restart').addEventListener('click', (e) => { 
 				document.querySelector("#modal .modal-guts h1").textContent = "Restart?";
 				document.querySelector("#modal .modal-guts").getElementsByTagName('p')[0].textContent = "Are you sure you want to restart?";
-				document.querySelector("#modal .modal-guts").getElementsByTagName('p')[1].classList.add("closed");
+				document.querySelector("#modal .modal-guts").getElementsByTagName('p')[1].classList.add("modal_closed");
 
 				var ul = document.querySelector("#modal .modal-guts ul");
 				ul.innerHTML = "";
@@ -213,7 +206,7 @@
 				var msg;
 				if (document.querySelector('#reset-nvs').checked || document.querySelector('#reset-homekit').checked) {
 					document.querySelector("#modal .modal-guts").getElementsByTagName('p')[1].textContent = "This will also reset the following;";
-					document.querySelector("#modal .modal-guts").getElementsByTagName('p')[1].classList.remove("closed");
+					document.querySelector("#modal .modal-guts").getElementsByTagName('p')[1].classList.remove("modal_closed");
 				}
 				if (document.querySelector('#reset-nvs').checked) {
 					var li = document.createElement("li");
@@ -226,15 +219,15 @@
 					ul.appendChild(li);
 				}
 				
-				document.querySelector("#modal").classList.remove("closed");
-				document.querySelector("#modal-overlay").classList.remove("closed");
+				document.querySelector("#modal").classList.remove("modal_closed");
+				document.querySelector("#modal-overlay").classList.remove("modal_closed");
 				document.querySelector("#app").classList.add("blur");
 			});		
 
 			document.querySelector("#modal .buttons").querySelectorAll("input").forEach((item) => {
 				item.addEventListener("click", (e) => {
-					document.querySelector("#modal").classList.add("closed");
-					document.querySelector("#modal-overlay").classList.add("closed");
+					document.querySelector("#modal").classList.add("modal_closed");
+					document.querySelector("#modal-overlay").classList.add("modal_closed");
 					document.querySelector("#app").classList.remove("blur");
 				})
 			});	
@@ -286,18 +279,106 @@
 				});  				
 			}
 
-			function checkStatus(){
-				fetch("/status.json", {
+			function performConnect(){
+
+				document.querySelector("#loading" ).style.display = "block";
+				document.querySelector("#connect-success" ).style.display = "none";
+				document.querySelector("#connect-fail" ).style.display = "none";
+				
+				document.querySelector("#connect-wait .ok").disabled = true;
+				
+				document.querySelector("#connect-wait h2 span").textContent = selectedSSID;
+				document.querySelector("#connect").classList.add("closed");
+				document.querySelector("#connect-wait").classList.remove("closed");
+										
+				counter = 0;
+				connectAttempt = true;
+				
+				fetch("/connect.json", {
+					method: 'POST',
 					cache: 'no-store',
 					headers: {
 					  'Content-Type': 'application/json'
 					},
+					body: JSON.stringify({ 
+						'ssid': selectedSSID, 
+						'password': document.querySelector("#pwd").value
+					})
 				}).then((response) =>  {
 					if (!response.ok) {
 						throw Error(response.statusText);
 					}
-					return response.json();
-				}).then((data) => {
+				}).catch((error) =>  {
+					console.log(error);
+					
+					// Failed to get a response - probably changing AP and IP has changed
+					document.querySelector("#connect-wait .ok").disabled = false;
+					
+					document.querySelector("#connect-fail p").textContent = "No response. You have most likely connected to the ESP via the router assigned address, and not directly to the ESP's Soft AP IP. The IP you were connected to is no longer valid."
+
+					document.querySelector("#loading" ).style.display = "none";
+					document.querySelector("#connect-success" ).style.display = "none";
+					document.querySelector("#connect-fail" ).style.display = "block";
+					
+					connectAttempt = false;
+				});
+			}
+			
+			function performRestart(){		
+				fetch("/restart.json", {
+					method: 'POST',
+					cache: 'no-store',
+					headers: {
+					  'Content-Type': 'application/json'
+					},
+					body: JSON.stringify({ 
+						'reset-nvs': document.querySelector('#reset-nvs').checked, 
+						'reset-homekit': document.querySelector('#reset-homekit').checked
+					})
+				}).then((response) =>  {
+					if (!response.ok) {
+						throw Error(response.statusText);
+					}
+
+				}).catch((error) =>  {
+					console.log(error);
+					
+				});
+			}			
+			
+			// Server Side Events. Log display and Wi-Fi status updates (not using 'polling' method')
+			document.addEventListener("DOMContentLoaded", function() {
+				if (window.EventSource == undefined) {
+					document.getElementById('log_output').innerHTML = "Your browser doesn't support Server Side Events."; 
+					return;
+				}
+				var source = new EventSource('event');
+				source.onopen = function (event) {
+					document.getElementById('log_output').innerHTML += 'Connection Opened.<br>';
+				};
+				source.onerror = function (event) {
+					if (event.eventPhase == EventSource.CLOSED) {  
+						document.getElementById('log_output').innerHTML += 'Connection Closed.<br>';  
+					}
+				};
+				source.onmessage = function (event) { //onmessage is all messages without a specific event:
+					var data_str;
+					var objDiv = document.getElementById('log_output');
+					var scroll_to_bottom = false;
+					if (objDiv.scrollTop >= objDiv.scrollHeight - objDiv.clientHeight) {
+						scroll_to_bottom = true;
+					}
+					data_str = event.data.replace("[0;31m", "<span style='color:red'>");
+					data_str = data_str.replace("[0;32m", "<span style='color:green'>");
+					data_str = data_str.replace("[0;33m", "<span style='color:yellow'>");
+					data_str = data_str.replace("[0m", "</span>");
+					objDiv.innerHTML += data_str + '<br>';
+					if (scroll_to_bottom) {
+						objDiv.scrollTop = objDiv.scrollHeight;
+					}
+				};
+				source.addEventListener("status", function(event) { // event: status
+					var data = JSON.parse(event.data);					
 					document.querySelector("#wifi-status .ssid_text").textContent = data["ssid"];
 					document.querySelector("#connect-details h1").textContent = data["ssid"];
 					document.querySelector("#ip").textContent = data["ip"];
@@ -334,115 +415,9 @@
 							}
 						}
 					}
-				}).catch((error) =>  {
-					console.log(error);
-				});  
-			}
 
-			function performConnect(){
-//				clearInterval(refreshAPTimer);
-				clearInterval(checkStatusTimer);
-		
-				document.querySelector("#loading" ).style.display = "block";
-				document.querySelector("#connect-success" ).style.display = "none";
-				document.querySelector("#connect-fail" ).style.display = "none";
-				
-				document.querySelector("#connect-wait .ok").disabled = true;
-				
-				document.querySelector("#connect-wait h2 span").textContent = selectedSSID;
-				document.querySelector("#connect").classList.add("closed");
-				document.querySelector("#connect-wait").classList.remove("closed");
-										
-				counter = 0;
-				connectAttempt = true;
-				
-				fetch("/connect.json", {
-					method: 'POST',
-					cache: 'no-store',
-					headers: {
-					  'Content-Type': 'application/json'
-					},
-					body: JSON.stringify({ 
-						'ssid': selectedSSID, 
-						'password': document.querySelector("#pwd").value
-					})
-				}).then((response) =>  {
-					if (!response.ok) {
-						throw Error(response.statusText);
-					}
-					checkStatusTimer = setInterval(checkStatus, checkStatusInterval);
-//					refreshAPTimer = setInterval(refreshAP, refreshAPInterval);	
-				}).catch((error) =>  {
-					console.log(error);
-					
-					// Failed to get a response - probably changing AP and IP has changed
-					document.querySelector("#connect-wait .ok").disabled = false;
-					
-					document.querySelector("#connect-fail p").textContent = "No response. You have most likely connected to the ESP via the router assigned address, and not directly to the ESP's Soft AP IP. The IP you have connected to is no longer valid."
 
-					document.querySelector("#loading" ).style.display = "none";
-					document.querySelector("#connect-success" ).style.display = "none";
-					document.querySelector("#connect-fail" ).style.display = "block";
-					
-					connectAttempt = false;
 				});
-			}
-			
-			function performRestart(){
-//				clearInterval(refreshAPTimer);
-				clearInterval(checkStatusTimer);
-		
-				fetch("/restart.json", {
-					method: 'POST',
-					cache: 'no-store',
-					headers: {
-					  'Content-Type': 'application/json'
-					},
-					body: JSON.stringify({ 
-						'reset-nvs': document.querySelector('#reset-nvs').checked, 
-						'reset-homekit': document.querySelector('#reset-homekit').checked
-					})
-				}).then((response) =>  {
-					if (!response.ok) {
-						throw Error(response.statusText);
-					}
-
-				}).catch((error) =>  {
-					console.log(error);
-					
-				});
-			}			
-			
-			document.addEventListener("DOMContentLoaded", function() {
-				if (window.EventSource == undefined) {
-					document.getElementById('log_output').innerHTML = "Your browser doesn't support Server Side Events."; 
-					return;
-				}
-				var source = new EventSource('event');
-				source.onopen = function (event) {
-					document.getElementById('log_output').innerHTML += 'Connection Opened.<br>';
-				};
-				source.onerror = function (event) {
-					if (event.eventPhase == EventSource.CLOSED) {  
-						document.getElementById('log_output').innerHTML += 'Connection Closed.<br>';  
-					}
-				};
-				source.onmessage = function (event) { 
-					var data_str;
-					var objDiv = document.getElementById('log_output');
-					var scroll_to_bottom = false;
-					if (objDiv.scrollTop >= objDiv.scrollHeight - objDiv.clientHeight) {
-						scroll_to_bottom = true;
-					}
-					data_str = event.data.replace("[0;31m", "<span style='color:red'>");
-					data_str = data_str.replace("[0;32m", "<span style='color:green'>");
-					data_str = data_str.replace("[0;33m", "<span style='color:yellow'>");
-					data_str = data_str.replace("[0m", "</span>");
-					objDiv.innerHTML += data_str + '<br>';
-					if (scroll_to_bottom) {
-						objDiv.scrollTop = objDiv.scrollHeight;
-					}
-				};
 			});
 			
 		</script>
@@ -590,10 +565,10 @@
 			
 			.slider {
 				overflow-y: hidden;
-				max-height: 800px;             /* approximate max height to fit 10 APs */
+				max-height: 1200px;             /* approximate max height to fit 10 APs */
 
 				transition-property: all;
-				transition-duration: 0.5s;
+				transition-duration: 0.8s;
 				transition-timing-function: cubic-bezier(0, 1, 0.5, 1);
 			}
 			.slider.closed {
@@ -678,7 +653,7 @@
 				width: 1em;
 				margin-left: -1em;
 			}
-			.closed {
+			.modal_closed {
 				display: none;
 			}
 			.modal-overlay {

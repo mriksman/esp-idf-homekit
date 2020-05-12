@@ -6,10 +6,12 @@ extern "C" {
 
 #include <esp_http_server.h>
 
+#define MAX_AP_COUNT 10
+#define LOG_BUF_MAX_LINE_SIZE 160
+#define MAX_SSE_CLIENTS 3
+
 esp_err_t start_webserver(void);
 void stop_webserver(void);
-
-#define MAX_AP_COUNT 10
 
 #ifdef __cplusplus
 }

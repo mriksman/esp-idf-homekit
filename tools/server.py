@@ -46,29 +46,56 @@ def connect_json():
 
 @app.route("/restart.json", methods=["POST"])
 def restart_json():
-    # Validate the request body contains JSON
     if request.is_json:
-        # Parse the JSON into a Python dictionary
         req = request.get_json()
-        # Print the dictionary
         print(req)
-        # Return a string along with an HTTP status code
         return "JSON received!", 200
     else:
-        # The request body wasn't JSON so return a 400 HTTP status code
         return "Request was not JSON", 400
-		
+
+counter = 0
+update = "Initial"
+
 @app.route("/event")
 def stream():
     def eventStream():
-        with app.app_context():
+        with app.app_context():		
+            global counter
+            global update
             while True:
+                counter += 1
+                if counter == 100:
+                    counter=0
                 yield "data: this is a really long debug string that will be longer than the width of the log display\n\n"
                 with open(base_path+'\\tools\\status.json') as json_file:
 	                data = json.loads(json_file.read())	
                 yield "event: status\ndata:" + json.dumps(data) + "\n\n"
+                yield "event: firmware\ndata:{\"version\":\"abcde-3443\"}\n\n"
+                yield "event: update\ndata:{\"progress\":\"" + str(counter) + "\", \"status\":\"" + update + "\"}\n\n"
                 sleep(5)
     
     return Response(eventStream(), mimetype="text/event-stream")
+
+@app.route("/update.json", methods=["POST"])
+def update_json():
+    if request.is_json:
+        global update
+        update = "Connected.."
+        req = request.get_json()
+        print(req)
+        return "JSON received!", 200
+    else:
+        return "Request was not JSON", 400
+
+@app.route("/send", methods=["POST"])
+def send_update():
+    global update
+    update = "Downloading..."
+    print(request.content_length)
+    with open(base_path+'\\tools\\test.bin', "wb") as fp:
+        fp.write(request.data)
+    return "File downloaded", 200
+
+
 
 app.run(host='0.0.0.0', debug=True)

@@ -1,12 +1,16 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <freertos/timers.h>
+#include <sys/param.h>                          // MIN MAX
 
 #include "esp_http_server.h"
 #include "esp_wifi.h"
 #include "cJSON.h"
 #include "nvs_flash.h"
 #include "lwip/sockets.h"
+
+#include "esp_ota_ops.h"
+#include "esp_image_format.h"
 
 #include "wifi.h"
 #include "httpd.h"
@@ -24,16 +28,14 @@ static httpd_handle_t server = NULL;
     esp_event_handler_instance_t ip_event_handler_instance;
 #endif
 
-#define LOG_BUF_MAX_LINE_SIZE 120
 char log_buf[LOG_BUF_MAX_LINE_SIZE];
 static TaskHandle_t t_sse_task_handle;
 static QueueHandle_t q_sse_message_queue;
 static putchar_like_t old_function = NULL;
 
-// set volatile as a client could be removed at any time and the sse_logging_task needs to make sure it has an updated copy
-#define MAX_SSE_CLIENTS 3
+// set volatile as a client could be removed at any time and the sse_logging_task 
+// needs to make sure it has an updated copy
 volatile int sse_sockets[MAX_SSE_CLIENTS];
-
 
 int sse_logging_putchar(int chr) {
     if(chr == '\n'){
@@ -52,27 +54,47 @@ int sse_logging_putchar(int chr) {
 	return old_function( chr );
 }
 
+
+void send_sse_message (char* message, char* event) {
+    const char *sse_data = "data: ";
+    const char *sse_event = "\nevent: ";
+    const char *sse_end_message = "\n\n";
+
+    size_t event_len = 0;
+    if (event != NULL) {
+        event_len = strlen(sse_event) + strlen(event);
+    }
+    char send_buf[strlen(sse_data) + strlen(message) + event_len + strlen(sse_end_message)];
+    strcpy(send_buf, sse_data);
+    strcat(send_buf, message);
+    if (event != NULL) {
+        strcat(send_buf, sse_event);
+        strcat(send_buf, event);
+    }
+    strcat(send_buf, sse_end_message);
+
+    size_t message_len = strlen(send_buf);
+
+    int return_code;
+    for (int i = 0; i < MAX_SSE_CLIENTS; i++) {
+        if (sse_sockets[i] != 0) {
+            return_code = send(sse_sockets[i], send_buf, message_len, 0);
+            if (return_code < 0) {
+                httpd_sess_trigger_close(server, sse_sockets[i]);
+            }
+        }
+    }
+}
+
 static void sse_logging_task(void * param)
 {
-    const char *sse_begin = "data: ";
-    const char *sse_end_message = "\n\n";
-    char recv_buf[LOG_BUF_MAX_LINE_SIZE + strlen(sse_begin) + strlen(sse_end_message)];
-    strcpy(recv_buf, sse_begin);
-    int return_code;
+    char recv_buf[LOG_BUF_MAX_LINE_SIZE];
 
     while(1) {
-        if (xQueueReceive(q_sse_message_queue, recv_buf + strlen(sse_begin), portMAX_DELAY) == pdTRUE) {
-            strcat(recv_buf, sse_end_message);
-            for (int i = 0; i < MAX_SSE_CLIENTS; i++) {
-                if (sse_sockets[i] != 0) {
-                    return_code = send(sse_sockets[i], recv_buf, strlen(recv_buf), 0);
-                    if (return_code < 0) {
-                         httpd_sess_trigger_close(server, sse_sockets[i]);
-                    }
-                }
-            } //for
-        } // if
-    } //while
+        if (xQueueReceive(q_sse_message_queue, recv_buf, portMAX_DELAY) == pdTRUE) {
+            send_sse_message(recv_buf, NULL);
+        } 
+    }
 }
 
 static void status_json_sse_handler()
@@ -104,29 +126,13 @@ static void status_json_sse_handler()
     snprintf(ip_buf, 17, IPSTR, IP2STR(&ip_info.gw));
     cJSON_AddItemToObject(root, "gw", cJSON_CreateString(ip_buf));
     cJSON_AddItemToObject(root, "if_status", cJSON_CreateBool(if_status));
-
  
     out = cJSON_PrintUnformatted(root);
 
     ESP_LOGI(TAG, "ssid: %s, ip:"IPSTR", netmask:"IPSTR", gw:"IPSTR", if_up? %s",
         wifi_cfg.sta.ssid, IP2STR(&ip_info.ip), IP2STR(&ip_info.netmask), IP2STR(&ip_info.gw), if_status?"TRUE":"FALSE");
 
-    const char *sse_begin = "event: status\ndata: ";
-    const char *sse_end_message = "\n\n";
-    char recv_buf[strlen(out) + strlen(sse_begin) + strlen(sse_end_message)];
-    strcpy(recv_buf, sse_begin);
-    strcat(recv_buf, out);
-    strcat(recv_buf, sse_end_message);
-
-    int return_code;
-    for (int i = 0; i < MAX_SSE_CLIENTS; i++) {
-        if (sse_sockets[i] != 0) {
-            return_code = send(sse_sockets[i], recv_buf, strlen(recv_buf), 0);
-            if (return_code < 0) {
-                    httpd_sess_trigger_close(server, sse_sockets[i]);
-            }
-        }
-    }
+    send_sse_message(out, "status");
 
     /* free all objects under root and root itself */
     cJSON_Delete(root);
@@ -158,7 +164,6 @@ esp_err_t server_side_sevent_registration_handler(httpd_req_t *req)
     // disable sending to sse_socket until a proper HTTP 200 OK response has been sent back to client
     old_function = esp_log_set_putchar(old_function);
 
-    int client_fd = httpd_req_to_sockfd(req);
     int len;
     char buffer[150];
     int i = 0;
@@ -168,7 +173,8 @@ esp_err_t server_side_sevent_registration_handler(httpd_req_t *req)
         for (i = 0; i < MAX_SSE_CLIENTS; i++) {
             if (sse_sockets[i] == 0) {
                 req->sess_ctx = malloc(sizeof(int)); 
-                req->free_ctx = free_sse_ctx_func;   
+                req->free_ctx = free_sse_ctx_func; 
+                int client_fd = httpd_req_to_sockfd(req);  
                 *(int *)req->sess_ctx = client_fd;
                 sse_sockets[i] = client_fd;
                 ESP_LOGD(TAG, "sse_socket: %d slot %d", sse_sockets[i], i);
@@ -195,6 +201,13 @@ esp_err_t server_side_sevent_registration_handler(httpd_req_t *req)
 
     // send first wi-fi status information;
     status_json_sse_handler();
+
+    // send firmware details information;
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_app_desc_t app_desc;
+    esp_ota_get_partition_description(running, &app_desc);
+    sprintf(buffer, "{\"version\":\"%s\"}", app_desc.version);
+    send_sse_message(buffer, "firmware");
 
     // enable sse logging again
     old_function = esp_log_set_putchar(old_function);  
@@ -265,7 +278,6 @@ esp_err_t connect_json_handler(httpd_req_t *req)
     int cur_len = 0;
     char buf[SCRATCH_BUFSIZE];
     int received = 0;
-    char resp[8];
 
     if (total_len >= SCRATCH_BUFSIZE) {
         /* Respond with 500 Internal Server Error */
@@ -306,8 +318,7 @@ esp_err_t connect_json_handler(httpd_req_t *req)
     esp_wifi_disconnect();  
     esp_wifi_connect();         // ignore mutex - we want this to take priority and immediately
     
-    snprintf(resp, 8, "OK");
-    httpd_resp_send(req, resp, strlen(resp));
+    httpd_resp_send(req, NULL, 0);
 
     cJSON_Delete(root);
     return ESP_OK;
@@ -323,7 +334,6 @@ esp_err_t restart_json_handler(httpd_req_t *req)
     int cur_len = 0;
     char buf[SCRATCH_BUFSIZE];
     int received = 0;
-    char msg[60];
 
     if (total_len >= SCRATCH_BUFSIZE) {
         /* Respond with 500 Internal Server Error */
@@ -362,16 +372,181 @@ esp_err_t restart_json_handler(httpd_req_t *req)
 
     //start Timer to restart.
     TimerHandle_t restart_timer;
-    restart_timer = xTimerCreate("Restart Timer", pdMS_TO_TICKS(5000),
+    restart_timer = xTimerCreate("Restart Timer", pdMS_TO_TICKS(2000),
             pdFALSE, NULL, restart_timer_callback
         );
     xTimerStart(restart_timer, 1);
 
-    snprintf(msg, 60, "Reset nvs = %d, homekit = %d. Restarting in 5 seconds...", cJSON_IsTrue(reset_nvs), cJSON_IsTrue(reset_homekit));
-    ESP_LOGW(TAG, msg);
-    httpd_resp_send(req, msg, strlen(msg));
+    ESP_LOGW(TAG, "Reset nvs = %d, homekit = %d. Restarting...", cJSON_IsTrue(reset_nvs), cJSON_IsTrue(reset_homekit));
+
+    // Just send an OK response. Client can monitor console logs.
+    httpd_resp_send(req, NULL, 0);
 
     cJSON_Delete(root);
+    return ESP_OK;
+}
+
+esp_err_t update_json_handler(httpd_req_t *req)
+{
+    int total_len = req->content_len;
+    int cur_len = 0;
+    char buf[SCRATCH_BUFSIZE];
+    int received = 0;
+
+    if (total_len >= SCRATCH_BUFSIZE) {
+        /* Respond with 500 Internal Server Error */
+        #ifdef CONFIG_IDF_TARGET_ESP32
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Content too long");
+        #elif CONFIG_IDF_TARGET_ESP8266
+            httpd_resp_send_500(req);
+        #endif
+        return ESP_FAIL;
+    }
+    while (cur_len < total_len) {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0) {
+            /* Respond with 500 Internal Server Error */
+            #ifdef CONFIG_IDF_TARGET_ESP32            
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error receiving data");
+            #elif CONFIG_IDF_TARGET_ESP8266
+                httpd_resp_send_500(req);
+            #endif
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[total_len] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    cJSON *update = cJSON_GetObjectItem(root, "update");
+ 
+    if (cJSON_IsTrue(update)) {
+        const esp_partition_t *app0_partition;
+        app0_partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+
+        if (esp_ota_set_boot_partition(app0_partition) != ESP_OK) {
+            ESP_LOGW(TAG, "Unable to set boot partition to '%s' at offset 0x%x",
+                            app0_partition->label, app0_partition->address);
+        } else {
+            //start Timer to restart.
+            TimerHandle_t restart_timer;
+            restart_timer = xTimerCreate("Restart Timer", pdMS_TO_TICKS(2000),
+                    pdFALSE, NULL, restart_timer_callback
+                );
+            xTimerStart(restart_timer, 1);
+
+            ESP_LOGW(TAG, "Booting to '%s' at offset 0x%x. Restarting...",
+                             app0_partition->label, app0_partition->address);
+        }
+    }
+    else {
+        ESP_LOGW(TAG, "'update' URI called, but JSON incorrect");
+    }
+    // Just send an OK response. Client can monitor console logs.
+    httpd_resp_send(req, NULL, 0);
+
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+esp_err_t update_boot_handler(httpd_req_t *req)
+{
+    char buffer[SCRATCH_BUFSIZE];
+    int len = 0;
+               
+    esp_ota_handle_t ota_handle; 
+    esp_err_t err = ESP_OK;
+
+    const esp_partition_t *boot_partition;
+    boot_partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+    if (boot_partition == NULL) {
+        err = ESP_ERR_OTA_SELECT_INFO_INVALID;
+    }
+
+    // File cannot be larger than partition size
+    if (boot_partition != NULL && req->content_len > boot_partition->size) {
+        ESP_LOGE(TAG, "Content-Length of %d larger than partition size of %d", req->content_len, boot_partition->size); 
+        err = ESP_ERR_INVALID_SIZE;
+    }
+
+    int remaining = req->content_len;
+    bool is_image_header_checked = false;
+    bool more_content = true;
+
+    while (more_content) {
+        if (err == ESP_OK && len > sizeof(esp_image_header_t) && !is_image_header_checked) {
+            esp_image_header_t check_header; 
+            memcpy(&check_header, buffer, sizeof(esp_image_header_t));
+            int32_t entry = check_header.entry_addr - 0x40200010;
+
+            if (check_header.magic != 0xE9) {
+                ESP_LOGE(TAG, "OTA image has invalid magic byte (expected 0xE9, saw 0x%x)", check_header.magic);
+                err = ESP_ERR_OTA_VALIDATE_FAILED;
+            }
+            else if ( (entry < boot_partition->address)  ||
+                (entry > boot_partition->address + boot_partition->size) ) {
+                ESP_LOGE(TAG, "OTA binary start entry 0x%x, partition start from 0x%x to 0x%x", entry, 
+                    boot_partition->address, boot_partition->address + boot_partition->size);
+                err = ESP_ERR_OTA_VALIDATE_FAILED;
+            }
+
+            if (err == ESP_OK) {
+                // esp_ota_begin erases the partition, so only call it if the incoming file 
+                //  looks OK.
+                err = esp_ota_begin(boot_partition, OTA_SIZE_UNKNOWN, &ota_handle);
+                if (err != ESP_OK) {
+                    ESP_LOGE(TAG, "Error esp_ota_begin()"); 
+                } 
+                else {
+                    ESP_LOGI(TAG, "Writing to partition '%s' at offset 0x%x",
+                        boot_partition->label, boot_partition->address);
+                }
+            }
+            is_image_header_checked = true;
+        }
+
+        // if no previous errors, continue to write. otherwise, just read the incoming data until it completes
+        //  and send the HTTP error response back. stopping the connection early causes the client to
+        //  display an ERROR CONNECTION CLOSED response instead of a meaningful error
+        if (err == ESP_OK && is_image_header_checked) {
+            err = esp_ota_write(ota_handle, buffer, len);
+        }
+
+        remaining -= len;
+
+        if (remaining != 0) {
+            if ((len = httpd_req_recv(req, buffer, MIN(remaining, SCRATCH_BUFSIZE))) <= 0) {
+                if (len == HTTPD_SOCK_ERR_TIMEOUT) {
+                    /* Retry if timeout occurred */
+                    len = 0;
+                    continue;
+                }
+                ESP_LOGE(TAG, "File reception failed!");
+                err = ESP_FAIL;
+            }
+        }
+        else {
+            more_content = false;
+        }
+    } // end while(). no more content to read
+
+    ESP_LOGI(TAG, "Binary transferred finished: %d bytes", req->content_len);
+
+    if (ota_handle) {
+        err = esp_ota_end(ota_handle);
+    } 
+
+    if (err == ESP_OK) {
+        httpd_resp_send(req, NULL, 0);
+    } else {
+        #ifdef CONFIG_IDF_TARGET_ESP32            
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "OTA Failed");
+        #elif CONFIG_IDF_TARGET_ESP8266
+            httpd_resp_set_status(req, HTTPD_400);
+            httpd_resp_send(req, NULL, 0);
+        #endif
+    }
+    
     return ESP_OK;
 }
 
@@ -397,6 +572,7 @@ esp_err_t start_webserver(void)
         };
         httpd_register_uri_handler(server, &root_page);
 
+        // Scan AP. Requested when the refresh button is pressed
         httpd_uri_t ap_json_page = {
             .uri       = "/ap.json",
             .method    = HTTP_GET,
@@ -405,6 +581,7 @@ esp_err_t start_webserver(void)
         };
         httpd_register_uri_handler(server, &ap_json_page);
 
+        // Sends SSID and password for AP to connect to
         httpd_uri_t connect_json_page = {
             .uri       = "/connect.json",
             .method    = HTTP_POST,
@@ -413,6 +590,7 @@ esp_err_t start_webserver(void)
         };
         httpd_register_uri_handler(server, &connect_json_page);
 
+        // Requests a restart - includes JSON with whether to reset NVS and/or HomeKit
         httpd_uri_t restart_json_page = {
             .uri       = "/restart.json",
             .method    = HTTP_POST,
@@ -421,6 +599,16 @@ esp_err_t start_webserver(void)
         };
         httpd_register_uri_handler(server, &restart_json_page);
 
+        // Requests ESP to restart to 'bootloader' partition to begin update of the 'main' partition
+        httpd_uri_t update_json_page = {
+            .uri       = "/update.json",
+            .method    = HTTP_POST,
+            .handler   = update_json_handler,
+            .user_ctx  = NULL
+        };
+        httpd_register_uri_handler(server, &update_json_page);
+
+        // CLient requesting Server Side Events
         httpd_uri_t server_side_sevent_registration_page = {
             .uri       = "/event",
             .method    = HTTP_GET,
@@ -428,6 +616,15 @@ esp_err_t start_webserver(void)
             .user_ctx  = NULL
         };
         httpd_register_uri_handler(server, &server_side_sevent_registration_page);
+
+        // Not shown on the webpage. Used to update boot partition
+        httpd_uri_t update_boot_page = {
+            .uri       = "/updateboot",
+            .method    = HTTP_POST,
+            .handler   = update_boot_handler,
+            .user_ctx  = NULL
+        };
+        httpd_register_uri_handler(server, &update_boot_page);
 
         // esp_event_handler_register is being deprecated
         #ifdef CONFIG_IDF_TARGET_ESP32

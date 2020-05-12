@@ -2,6 +2,7 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"              // For EventGroupHandle_t
 #include "driver/gpio.h"
+#include <sys/param.h>                          // MIN MAX
 
 #include "esp_event.h"
 
@@ -42,13 +43,8 @@ static bool paired = false;
 
 static led_status_pattern_t ap_mode = LED_STATUS_PATTERN({1000, -1000});
 static led_status_pattern_t not_paired = LED_STATUS_PATTERN({100, -100});
-static led_status_pattern_t pairing = LED_STATUS_PATTERN({100, -100, 100, -600});
 static led_status_pattern_t normal_mode = LED_STATUS_PATTERN({5, -9995});
 static led_status_pattern_t identify = LED_STATUS_PATTERN({100, -100, 100, -350, 100, -100, 100, -350, 100, -100, 100, -350});
-
-#define MIN(a, b) (((b) < (a)) ? (b) : (a))
-#define MAX(a, b) (((a) < (b)) ? (b) : (a))
-
 
 // *** Included to show app_desc_t from partition ***
 #include "esp_app_format.h"
@@ -172,11 +168,21 @@ homekit_characteristic_t lightbulb2_brightness = HOMEKIT_CHARACTERISTIC_(
 static void light_dim_timer_callback(TimerHandle_t timer) {
     uint8_t light_idx = *((uint8_t*) pvTimerGetTimerID(timer));
 
-    (lights[light_idx].lightbulb_brightness)->value.int_value = MAX(10, MIN( 100, (lights[light_idx].lightbulb_brightness)->value.int_value + lights[light_idx].dim_direction));
+    int brightness = (lights[light_idx].lightbulb_brightness)->value.int_value;
+    brightness = MIN(100, brightness + 2*lights[light_idx].dim_direction);
+    brightness = MAX(10, brightness);
+    (lights[light_idx].lightbulb_brightness)->value.int_value = brightness;
     homekit_characteristic_notify(lights[light_idx].lightbulb_brightness, (lights[light_idx].lightbulb_brightness)->value);
 
-    (lights[light_idx].lightbulb_on)->value.bool_value = ((lights[light_idx].lightbulb_brightness)->value.int_value > 0) ? true : false;
+    bool on = (lights[light_idx].lightbulb_on)->value.bool_value;
+    on = brightness > 0 ? true : false;
+    (lights[light_idx].lightbulb_on)->value.bool_value = on;
     homekit_characteristic_notify(lights[light_idx].lightbulb_on, (lights[light_idx].lightbulb_on)->value);
+
+    // don't continue running timer if max/min has been reached
+    if ( brightness == 10 || brightness == 100) {
+        xTimerStop(lights[light_idx].dim_timer, 0);
+    }
 }
 
 homekit_characteristic_t name = HOMEKIT_CHARACTERISTIC_(NAME, "esp");
@@ -250,13 +256,9 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == HOMEKIT_EVENT) {
         if (event_id == HOMEKIT_EVENT_CLIENT_CONNECTED) {
             ESP_LOGI(TAG, "HOMEKIT_EVENT_CLIENT_CONNECTED");
-            if (!paired)
-                led_status_set(led_status, &pairing);
         }
         else if (event_id == HOMEKIT_EVENT_CLIENT_DISCONNECTED) {
             ESP_LOGI(TAG, "HOMEKIT_EVENT_CLIENT_DISCONNECTED");
-            if (!paired)
-                led_status_set(led_status, &not_paired);
         }
         else if (event_id == HOMEKIT_EVENT_PAIRING_ADDED || event_id == HOMEKIT_EVENT_PAIRING_REMOVED) {
             ESP_LOGI(TAG, "HOMEKIT_EVENT_PAIRING_ADDED or HOMEKIT_EVENT_PAIRING_REMOVED");
@@ -274,10 +276,10 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
         }
 
         else if (event_id == BUTTON_EVENT_DOWN_HOLD) {
-            xTimerStart(lights[light_idx].dim_timer, 1);
+            xTimerStart(lights[light_idx].dim_timer, 0);
         }
         else if (event_id == BUTTON_EVENT_UP_HOLD) {
-            xTimerStop(lights[light_idx].dim_timer, 1);
+            xTimerStop(lights[light_idx].dim_timer, 0);
             lights[light_idx].dim_direction *= -1;
         }
 
@@ -307,7 +309,7 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
 
                 char buffer[400];
                 vTaskList(buffer);
-                ESP_LOGI(TAG, buffer);
+                ESP_LOGI(TAG, "\n%s", buffer);
 
                 ESP_LOGW(TAG, "INTENABLE %x", xthal_get_intenable() );
             } 
@@ -385,11 +387,12 @@ void configure_peripherals() {
     pwm_set_phases(phases);                         // throws an error if not set (even if it's 0)
     pwm_start();
 
+    // 100ms per 2% is 5s
     lights[0].dim_timer = xTimerCreate(
-        "dim0", 5, pdTRUE, &lights[0].idx, light_dim_timer_callback
+        "dim0", 100/portTICK_PERIOD_MS, pdTRUE, &lights[0].idx, light_dim_timer_callback
     );
     lights[1].dim_timer = xTimerCreate(
-        "dim1", 5, pdTRUE, &lights[1].idx, light_dim_timer_callback
+        "dim1", 100/portTICK_PERIOD_MS, pdTRUE, &lights[1].idx, light_dim_timer_callback
     );
 
 }
@@ -441,11 +444,10 @@ void app_main(void)
         esp_event_loop_init(legacy_event_handler, NULL);
     #endif
 
-
     configure_peripherals();
-
+  
     wifi_init();
-
+ 
     create_accessory_name();
     homekit_server_init(&config);
 
@@ -454,10 +456,7 @@ void app_main(void)
 
 
 
-
-
-
-
+/*
     const esp_partition_t *next = esp_ota_get_running_partition();
     esp_app_desc_t app_desc;
     esp_ota_get_partition_description(next, &app_desc);
@@ -472,5 +471,5 @@ ota_get_app_description         0x%8x  %s   %s   %s",
              app_desc1->magic_word, app_desc1->version, app_desc1->project_name, app_desc1->time
             );
 
-
+*/
 }

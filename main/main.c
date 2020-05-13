@@ -325,11 +325,11 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
 }
 
 void homekit_on_event(homekit_event_t event) {
-    esp_event_post(HOMEKIT_EVENT, event, NULL, sizeof(NULL), 100/portTICK_PERIOD_MS);
+    esp_event_post(HOMEKIT_EVENT, event, NULL, sizeof(NULL), 10);
 }
 void button_callback(button_event_t event, void* context) {
     // esp_event_post sends a pointer to a COPY of the data.
-    esp_event_post(BUTTON_EVENT, event, context, sizeof(uint8_t), 100/portTICK_PERIOD_MS);
+    esp_event_post(BUTTON_EVENT, event, context, sizeof(uint8_t), 10);
 }
 
 homekit_server_config_t config = {
@@ -389,10 +389,10 @@ void configure_peripherals() {
 
     // 100ms per 2% is 5s
     lights[0].dim_timer = xTimerCreate(
-        "dim0", 100/portTICK_PERIOD_MS, pdTRUE, &lights[0].idx, light_dim_timer_callback
+        "dim0", pdMS_TO_TICKS(100), pdTRUE, &lights[0].idx, light_dim_timer_callback
     );
     lights[1].dim_timer = xTimerCreate(
-        "dim1", 100/portTICK_PERIOD_MS, pdTRUE, &lights[1].idx, light_dim_timer_callback
+        "dim1", pdMS_TO_TICKS(100), pdTRUE, &lights[1].idx, light_dim_timer_callback
     );
 
 }

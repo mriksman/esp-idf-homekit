@@ -14,6 +14,9 @@ app = Flask(
     static_folder=os.path.join(base_path, 'web')
 )
 
+counter = 0
+update = "Initial"
+
 @app.route('/')
 def root():
     return app.send_static_file('wifi.html')
@@ -21,12 +24,6 @@ def root():
 @app.route("/ap.json", methods=["GET"])
 def ap_json():
     with open(base_path+'\\tools\\ap.json') as json_file:
-	    data = json.load(json_file)
-    return jsonify(data)
-
-@app.route("/status.json", methods=["GET"])
-def status_json():
-    with open(base_path+'\\tools\\status.json') as json_file:
 	    data = json.load(json_file)
     return jsonify(data)
 
@@ -48,13 +45,13 @@ def connect_json():
 def restart_json():
     if request.is_json:
         req = request.get_json()
+        if req['update'] == True:
+            global update
+            update = "Connected.."
         print(req)
         return "JSON received!", 200
     else:
         return "Request was not JSON", 400
-
-counter = 0
-update = "Initial"
 
 @app.route("/event")
 def stream():
@@ -76,17 +73,7 @@ def stream():
     
     return Response(eventStream(), mimetype="text/event-stream")
 
-@app.route("/update.json", methods=["POST"])
-def update_json():
-    if request.is_json:
-        global update
-        update = "Connected.."
-        req = request.get_json()
-        print(req)
-        return "JSON received!", 200
-    else:
-        return "Request was not JSON", 400
-
+# /send URI would be on the 'boot' partition to accept 'main' update file
 @app.route("/send", methods=["POST"])
 def send_update():
     global update
@@ -95,7 +82,5 @@ def send_update():
     with open(base_path+'\\tools\\test.bin', "wb") as fp:
         fp.write(request.data)
     return "File downloaded", 200
-
-
 
 app.run(host='0.0.0.0', debug=True)

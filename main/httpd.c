@@ -7,7 +7,7 @@
 #include "esp_wifi.h"
 #include "cJSON.h"
 #include "nvs_flash.h"
-#include "lwip/sockets.h"
+#include "lwip/sockets.h"                       // SSE uses send()
 
 #include "esp_ota_ops.h"
 #include "esp_image_format.h"
@@ -159,7 +159,7 @@ void free_sse_ctx_func(void *ctx)
     free(ctx);
 }
 
-esp_err_t server_side_sevent_registration_handler(httpd_req_t *req)
+esp_err_t server_side_event_registration_handler(httpd_req_t *req)
 {
     // disable sending to sse_socket until a proper HTTP 200 OK response has been sent back to client
     old_function = esp_log_set_putchar(old_function);
@@ -226,6 +226,7 @@ esp_err_t root_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* GET handler for /ap.json. Retrieves list of APs */
 esp_err_t ap_json_handler(httpd_req_t *req)
 {
     char *out;
@@ -234,7 +235,7 @@ esp_err_t ap_json_handler(httpd_req_t *req)
 
     uint16_t ap_count = 0;
 
-    if( xSemaphoreTake(*(get_wifi_mutex()), 500/portTICK_PERIOD_MS) == pdTRUE) {
+    if( xSemaphoreTake(*(get_wifi_mutex()), pdMS_TO_TICKS(500)) == pdTRUE) {
         esp_wifi_scan_start(NULL, true);
         xSemaphoreGive(*(get_wifi_mutex()));       // only if wifi_scan_start is blocking, otherwise, do it in SCAN_DONE event
 
@@ -271,7 +272,7 @@ esp_err_t ap_json_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-
+/* POST handler for /connect.json. Takes SSID and Password and connects to AP */
 esp_err_t connect_json_handler(httpd_req_t *req)
 {
     int total_len = req->content_len;
@@ -280,24 +281,19 @@ esp_err_t connect_json_handler(httpd_req_t *req)
     int received = 0;
 
     if (total_len >= SCRATCH_BUFSIZE) {
-        /* Respond with 500 Internal Server Error */
-        #ifdef CONFIG_IDF_TARGET_ESP32
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Content too long");
-        #elif CONFIG_IDF_TARGET_ESP8266
-            httpd_resp_send_500(req);
-        #endif
+        // Client will not receive response if it hasn't finished sending the POST data
+        // Can't store to buffer (too big), so just close connection
         return ESP_FAIL;
     }
     while (cur_len < total_len) {
         received = httpd_req_recv(req, buf + cur_len, total_len);
         if (received <= 0) {
-            /* Respond with 500 Internal Server Error */
-            #ifdef CONFIG_IDF_TARGET_ESP32            
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error receiving data");
-            #elif CONFIG_IDF_TARGET_ESP8266
-                httpd_resp_send_500(req);
-            #endif
-            return ESP_FAIL;
+            if (received == HTTPD_SOCK_ERR_TIMEOUT) {
+                    // Retry if timeout occurred
+                    continue;
+                }
+                ESP_LOGE(TAG, "JSON reception failed!");
+                return ESP_FAIL;
         }
         cur_len += received;
     }
@@ -324,10 +320,8 @@ esp_err_t connect_json_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-static void restart_timer_callback(TimerHandle_t timer) {
-    esp_restart();
-}
-
+/* POST handler for /restart.json. Restarts ESP. 
+   Optionally resets NVS and/or HomeKit or restarts into 'boot' partition to begin update */
 esp_err_t restart_json_handler(httpd_req_t *req)
 {
     int total_len = req->content_len;
@@ -335,25 +329,22 @@ esp_err_t restart_json_handler(httpd_req_t *req)
     char buf[SCRATCH_BUFSIZE];
     int received = 0;
 
+    esp_err_t err = ESP_OK;
+
     if (total_len >= SCRATCH_BUFSIZE) {
-        /* Respond with 500 Internal Server Error */
-        #ifdef CONFIG_IDF_TARGET_ESP32
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Content too long");
-        #elif CONFIG_IDF_TARGET_ESP8266
-            httpd_resp_send_500(req);
-        #endif
+        // Client will not receive response if it hasn't finished sending the POST data
+        // Can't store to buffer (too big), so just close connection
         return ESP_FAIL;
     }
     while (cur_len < total_len) {
         received = httpd_req_recv(req, buf + cur_len, total_len);
         if (received <= 0) {
-            /* Respond with 500 Internal Server Error */
-            #ifdef CONFIG_IDF_TARGET_ESP32            
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error receiving data");
-            #elif CONFIG_IDF_TARGET_ESP8266
-                httpd_resp_send_500(req);
-            #endif
-            return ESP_FAIL;
+            if (received == HTTPD_SOCK_ERR_TIMEOUT) {
+                    // Retry if timeout occurred
+                    continue;
+                }
+                ESP_LOGE(TAG, "JSON reception failed!");
+                return ESP_FAIL;
         }
         cur_len += received;
     }
@@ -362,93 +353,51 @@ esp_err_t restart_json_handler(httpd_req_t *req)
     cJSON *root = cJSON_Parse(buf);
     cJSON *reset_nvs = cJSON_GetObjectItem(root, "reset-nvs");
     cJSON *reset_homekit = cJSON_GetObjectItem(root, "reset-homekit");
- 
-    if (cJSON_IsTrue(reset_nvs)) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-    }
-    if (cJSON_IsTrue(reset_homekit)) {
-        homekit_server_reset();
-    }
-
-    //start Timer to restart.
-    TimerHandle_t restart_timer;
-    restart_timer = xTimerCreate("Restart Timer", pdMS_TO_TICKS(2000),
-            pdFALSE, NULL, restart_timer_callback
-        );
-    xTimerStart(restart_timer, 1);
-
-    ESP_LOGW(TAG, "Reset nvs = %d, homekit = %d. Restarting...", cJSON_IsTrue(reset_nvs), cJSON_IsTrue(reset_homekit));
-
-    // Just send an OK response. Client can monitor console logs.
-    httpd_resp_send(req, NULL, 0);
-
-    cJSON_Delete(root);
-    return ESP_OK;
-}
-
-esp_err_t update_json_handler(httpd_req_t *req)
-{
-    int total_len = req->content_len;
-    int cur_len = 0;
-    char buf[SCRATCH_BUFSIZE];
-    int received = 0;
-
-    if (total_len >= SCRATCH_BUFSIZE) {
-        /* Respond with 500 Internal Server Error */
-        #ifdef CONFIG_IDF_TARGET_ESP32
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Content too long");
-        #elif CONFIG_IDF_TARGET_ESP8266
-            httpd_resp_send_500(req);
-        #endif
-        return ESP_FAIL;
-    }
-    while (cur_len < total_len) {
-        received = httpd_req_recv(req, buf + cur_len, total_len);
-        if (received <= 0) {
-            /* Respond with 500 Internal Server Error */
-            #ifdef CONFIG_IDF_TARGET_ESP32            
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error receiving data");
-            #elif CONFIG_IDF_TARGET_ESP8266
-                httpd_resp_send_500(req);
-            #endif
-            return ESP_FAIL;
-        }
-        cur_len += received;
-    }
-    buf[total_len] = '\0';
-
-    cJSON *root = cJSON_Parse(buf);
     cJSON *update = cJSON_GetObjectItem(root, "update");
- 
+
+    // if 'update' is flagged, don't perform any resets of NVS of HomeKit
     if (cJSON_IsTrue(update)) {
         const esp_partition_t *app0_partition;
         app0_partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
 
-        if (esp_ota_set_boot_partition(app0_partition) != ESP_OK) {
+        err = esp_ota_set_boot_partition(app0_partition);
+        if (err != ESP_OK) {
             ESP_LOGW(TAG, "Unable to set boot partition to '%s' at offset 0x%x",
                             app0_partition->label, app0_partition->address);
         } else {
-            //start Timer to restart.
-            TimerHandle_t restart_timer;
-            restart_timer = xTimerCreate("Restart Timer", pdMS_TO_TICKS(2000),
-                    pdFALSE, NULL, restart_timer_callback
-                );
-            xTimerStart(restart_timer, 1);
-
             ESP_LOGW(TAG, "Booting to '%s' at offset 0x%x. Restarting...",
                              app0_partition->label, app0_partition->address);
         }
+    } 
+    else {
+        if (cJSON_IsTrue(reset_nvs)) {
+            err = nvs_flash_erase();
+        }
+        if (cJSON_IsTrue(reset_homekit)) {
+            homekit_server_reset();
+        }
+        ESP_LOGW(TAG, "Reset nvs = %d, homekit = %d. Restarting...", 
+            cJSON_IsTrue(reset_nvs), cJSON_IsTrue(reset_homekit));
+    }
+
+    if (err == ESP_OK) {
+        // Just send an OK response. Client can monitor console logs.
+        httpd_resp_send(req, NULL, 0);
+
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        esp_restart();
     }
     else {
-        ESP_LOGW(TAG, "'update' URI called, but JSON incorrect");
+        httpd_resp_set_status(req, HTTPD_400);
+        httpd_resp_send(req, NULL, 0);
     }
-    // Just send an OK response. Client can monitor console logs.
-    httpd_resp_send(req, NULL, 0);
 
     cJSON_Delete(root);
     return ESP_OK;
 }
 
+/* POST handler for /updateboot. 
+   Use curl to POST binary file to be updated to OTA_0 */
 esp_err_t update_boot_handler(httpd_req_t *req)
 {
     char buffer[SCRATCH_BUFSIZE];
@@ -539,12 +488,8 @@ esp_err_t update_boot_handler(httpd_req_t *req)
     if (err == ESP_OK) {
         httpd_resp_send(req, NULL, 0);
     } else {
-        #ifdef CONFIG_IDF_TARGET_ESP32            
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "OTA Failed");
-        #elif CONFIG_IDF_TARGET_ESP8266
-            httpd_resp_set_status(req, HTTPD_400);
-            httpd_resp_send(req, NULL, 0);
-        #endif
+        httpd_resp_set_status(req, HTTPD_400);
+        httpd_resp_send(req, NULL, 0);
     }
     
     return ESP_OK;
@@ -552,7 +497,6 @@ esp_err_t update_boot_handler(httpd_req_t *req)
 
 esp_err_t start_webserver(void)
 {
-
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_open_sockets = 5;
     // kick off any old socket connections to allow new connections
@@ -590,7 +534,7 @@ esp_err_t start_webserver(void)
         };
         httpd_register_uri_handler(server, &connect_json_page);
 
-        // Requests a restart - includes JSON with whether to reset NVS and/or HomeKit
+        // Requests a restart - includes JSON with whether to reset NVS and/or HomeKit or perform Update
         httpd_uri_t restart_json_page = {
             .uri       = "/restart.json",
             .method    = HTTP_POST,
@@ -599,23 +543,14 @@ esp_err_t start_webserver(void)
         };
         httpd_register_uri_handler(server, &restart_json_page);
 
-        // Requests ESP to restart to 'bootloader' partition to begin update of the 'main' partition
-        httpd_uri_t update_json_page = {
-            .uri       = "/update.json",
-            .method    = HTTP_POST,
-            .handler   = update_json_handler,
-            .user_ctx  = NULL
-        };
-        httpd_register_uri_handler(server, &update_json_page);
-
         // CLient requesting Server Side Events
-        httpd_uri_t server_side_sevent_registration_page = {
+        httpd_uri_t server_side_event_registration_page = {
             .uri       = "/event",
             .method    = HTTP_GET,
-            .handler   = server_side_sevent_registration_handler,
+            .handler   = server_side_event_registration_handler,
             .user_ctx  = NULL
         };
-        httpd_register_uri_handler(server, &server_side_sevent_registration_page);
+        httpd_register_uri_handler(server, &server_side_event_registration_page);
 
         // Not shown on the webpage. Used to update boot partition
         httpd_uri_t update_boot_page = {

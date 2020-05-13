@@ -37,12 +37,12 @@ static void retry_connect_task(void * arg)
 {
     for(;;) {
         ESP_LOGI(TAG, "Retry connection task");
-        if( xSemaphoreTake(g_wifi_mutex, 100/portTICK_PERIOD_MS) == pdTRUE) {
+        if( xSemaphoreTake(g_wifi_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             esp_wifi_connect();
         } else {
             ESP_LOGI(TAG, "Wi-Fi scan in progress");
         }
-        vTaskDelay(10000/portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
 

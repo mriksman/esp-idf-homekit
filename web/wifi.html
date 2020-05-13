@@ -422,9 +422,11 @@ function performRestart(){
 	});
 }			
 
-function performUpdate(){	
+function performUpdate(){
+	closeModal();
+	
 	// inform 'main' partition to boot into 'boot' partition
-	fetch("/update.json", {
+	fetch("/restart.json", {
 		method: 'POST',
 		cache: 'no-store',
 		headers: {
@@ -436,79 +438,77 @@ function performUpdate(){
 	}).then((response) =>  {
 		if (!response.ok) {
 			throw Error(response.statusText);
-		} // below code should be in here?
+		} 
+		else {
+			document.querySelector("#modal h2").textContent = "Updating...";
+
+			var body = document.querySelector("#modal .section_body span");
+			var status = document.createElement("p");
+			status.textContent = "Rebooting...";
+			body.appendChild(status);
+			var para = document.createElement("p");
+			para.innerHTML = "The ESP will restart into a bootloader mode.<br>Do <b>NOT</b> refresh your browser.<br>To begin the update, ensure you have reconnected to the ESP Wi-Fi. If the update fails, check the console log for more information";
+			body.appendChild(para);
+			
+			var br = document.createElement("br");
+			body.appendChild(br);
+			
+			var div = document.createElement("div");
+			div.classList.add("prgbar");
+			div.style.width = "250px";
+			div.style.margin = "0 auto";
+			var progress_bar = document.createElement("div");
+			progress_bar.classList.add("bar");
+			progress_bar.style.width = "0%";
+			div.appendChild(progress_bar);
+			body.appendChild(div);
+			
+			var buttons = document.querySelector("#modal .section_body .buttons");
+			var ok_button = document.createElement("input");
+			ok_button.type = "button";
+			ok_button.value = "OK";
+			ok_button.addEventListener("click", closeModal);
+			buttons.appendChild(ok_button);
+			
+			document.querySelector("#modal").style.height = "300px";
+			openModal();
+			
+			source.close(); // close current SSE session
+			
+			// wait a few seconds than attempt a reconnected to the boot partition SSE
+			setTimeout(function(){ 
+				serverSideEvents();
+				
+				source.addEventListener("update", function(event) { // event: update
+					var data = JSON.parse(event.data);					
+					progress_bar.style.width = data["progress"]+"%";
+					status.textContent = data["status"];
+					
+					if (data["status"] == "Connected..") {
+						var x = document.querySelector("#selected-file");
+						var file = x.files[0];
+
+						fetch("/send", {
+							method: 'POST',
+							cache: 'no-store',
+							headers: {
+							  'Content-Type': 'application/octet-stream'
+							},
+							body: file
+						}).then((response) =>  {
+							if (!response.ok) {
+								throw Error(response.statusText);
+							}
+						}).catch((error) =>  {
+							console.log(error);
+						});
+					}
+				});
+			}, 10000);
+		}
 	}).catch((error) =>  {
 		console.log(error);
 	});
-	
-	closeModal();
-
-	document.querySelector("#modal h2").textContent = "Updating...";
-
-	var body = document.querySelector("#modal .section_body span");
-	var status = document.createElement("p");
-	status.textContent = "Rebooting...";
-	body.appendChild(status);
-	var para = document.createElement("p");
-	para.innerHTML = "The ESP will restart into a bootloader mode.<br>Do <b>NOT</b> refresh your browser.<br>To begin the update, ensure you have reconnected to the ESP Wi-Fi. If the update fails, check the console log for more information";
-	body.appendChild(para);
-	
-	var br = document.createElement("br");
-	body.appendChild(br);
-	
-	var div = document.createElement("div");
-	div.classList.add("prgbar");
-	div.style.width = "250px";
-	div.style.margin = "0 auto";
-	var progress_bar = document.createElement("div");
-	progress_bar.classList.add("bar");
-	progress_bar.style.width = "0%";
-	div.appendChild(progress_bar);
-	body.appendChild(div);
-	
-	var buttons = document.querySelector("#modal .section_body .buttons");
-	var ok_button = document.createElement("input");
-	ok_button.type = "button";
-	ok_button.value = "OK";
-	ok_button.addEventListener("click", closeModal);
-	buttons.appendChild(ok_button);
-	
-	document.querySelector("#modal").style.height = "300px";
-	openModal();
-	
-	source.close(); // close current SSE session
-	
-	// wait a few seconds than attempt a reconnected to the boot partition SSE
-	setTimeout(function(){ 
-		serverSideEvents();
-		
-		source.addEventListener("update", function(event) { // event: update
-			var data = JSON.parse(event.data);					
-			progress_bar.style.width = data["progress"]+"%";
-			status.textContent = data["status"];
-			
-			if (data["status"] == "Connected..") {
-				var x = document.querySelector("#selected-file");
-				var file = x.files[0];
-
-				fetch("/send", {
-					method: 'POST',
-					cache: 'no-store',
-					headers: {
-					  'Content-Type': 'application/octet-stream'
-					},
-					body: file
-				}).then((response) =>  {
-					if (!response.ok) {
-						throw Error(response.statusText);
-					}
-				}).catch((error) =>  {
-					console.log(error);
-				});
-			}
-		});
-	}, 10000);
-	
 }			
 
 /*** Server Side Events. Log display and Wi-Fi status updates (not using 'polling' method') ***/

@@ -53,11 +53,6 @@ static led_status_pattern_t identify = LED_STATUS_PATTERN({100, -100, 100, -350,
 // **************************************************
 
 
-homekit_characteristic_t lightbulb1_on;
-homekit_characteristic_t lightbulb1_brightness;
-homekit_characteristic_t lightbulb2_on;
-homekit_characteristic_t lightbulb2_brightness;
-
 // use variables instead of defines to pass these values around as context/args
 static uint8_t status_led_gpio = 2;
 
@@ -66,8 +61,6 @@ typedef struct {
     uint8_t button_gpio;
     uint8_t light_gpio;
     uint8_t led_gpio;
-    homekit_characteristic_t *lightbulb_on;
-    homekit_characteristic_t *lightbulb_brightness;
     TimerHandle_t dim_timer;
     int8_t dim_direction;
 } light_service_t;
@@ -78,8 +71,6 @@ static light_service_t lights[] = {
     .button_gpio = GPIO_NUM_16,     //D0
     .light_gpio = GPIO_NUM_13,      //D7
     .led_gpio = GPIO_NUM_12,        //D6
-    .lightbulb_on = &lightbulb1_on,
-    .lightbulb_brightness = &lightbulb1_brightness,
     .dim_direction = -1,
     },
     {
@@ -87,11 +78,11 @@ static light_service_t lights[] = {
     .button_gpio = GPIO_NUM_5,      //D1 (will need to be GPIO 3 (RX) in final code)
     .light_gpio = GPIO_NUM_4,       //D2
     .led_gpio = GPIO_NUM_14,        //D5
-    .lightbulb_on = &lightbulb2_on,
-    .lightbulb_brightness = &lightbulb2_brightness,
     .dim_direction = -1,
     }
 };
+
+homekit_accessory_t *accessories[2];
 
 
 void status_led_identify(homekit_value_t _value) {
@@ -100,121 +91,69 @@ void status_led_identify(homekit_value_t _value) {
 
 void lightbulb_on_callback(homekit_characteristic_t *_ch, homekit_value_t value, void *context) {
     if (value.format != homekit_format_bool) {
-        ESP_LOGI(TAG, "Invalid value format: %d", value.format);
+        ESP_LOGE(TAG, "Invalid value format: %d", value.format);
         return;
     }
 
-    homekit_characteristic_t *brightness = homekit_service_characteristic_by_type(
+    homekit_characteristic_t *brightness_c = homekit_service_characteristic_by_type(
                 _ch->service, HOMEKIT_CHARACTERISTIC_BRIGHTNESS 
             );
     light_service_t light = *((light_service_t*) context);
 
-/*
-    ESP_LOGI(TAG, "Characteristic ON; Light: %d, Bool_val: %d, Set PWM: %d", 
-            light.idx,
-            value.bool_value ? 1 : 0, 
-            value.bool_value ? brightness->value.int_value * PWM_PERIOD_IN_US/100 : 0);
-*/
-
-    pwm_set_duty(light.idx, value.bool_value ? brightness->value.int_value * PWM_PERIOD_IN_US/100 : 0);
+    pwm_set_duty(light.idx, value.bool_value ? brightness_c->value.int_value * PWM_PERIOD_IN_US/100 : 0);
     pwm_start();
 
     // if the light is turned off, set the direction up for the next time the light turns on
     //  it makes sense that, if it turns on greater than 50% brightness, that the next
     //  dim direction should be to dim the lights.
     if (value.bool_value == false) {
-        lights[light.idx].dim_direction = brightness->value.int_value > 50 ? -1 : 1;
+        lights[light.idx].dim_direction = brightness_c->value.int_value > 50 ? -1 : 1;
     }
 
 }
-homekit_characteristic_t lightbulb1_on = HOMEKIT_CHARACTERISTIC_(
-    ON, false, .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
-		lightbulb_on_callback, .context=&lights[0]
-	)
-);
-homekit_characteristic_t lightbulb2_on = HOMEKIT_CHARACTERISTIC_(
-    ON, false, .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
-		lightbulb_on_callback, .context=&lights[1]
-	)
-);
 
 void lightbulb_brightness_callback(homekit_characteristic_t *_ch, homekit_value_t value, void *context) {
     if (value.format != homekit_format_int) {
-        ESP_LOGI(TAG, "Invalid value format: %d", value.format);
+        ESP_LOGE(TAG, "Invalid value format: %d", value.format);
         return;
     }
     light_service_t light = *((light_service_t*) context);
-/*
-    ESP_LOGI(TAG, "Characteristic BRIGHTNESS; Light: %d, Brightness_val: %d, Set PWM: %d", 
-            light.idx,
-            value.int_value, 
-            value.int_value * PWM_PERIOD_IN_US/100);
-*/
+
     pwm_set_duty(light.idx, value.int_value * PWM_PERIOD_IN_US/100);
     pwm_start();
 
 }
-homekit_characteristic_t lightbulb1_brightness = HOMEKIT_CHARACTERISTIC_(
-    BRIGHTNESS, 100, .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
-		lightbulb_brightness_callback, .context=&lights[0]
-	)
-);
-homekit_characteristic_t lightbulb2_brightness = HOMEKIT_CHARACTERISTIC_(
-    BRIGHTNESS, 100, .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
-		lightbulb_brightness_callback, .context=&lights[1]
-	)
-);
 
 static void light_dim_timer_callback(TimerHandle_t timer) {
     uint8_t light_idx = *((uint8_t*) pvTimerGetTimerID(timer));
 
-    int brightness = (lights[light_idx].lightbulb_brightness)->value.int_value;
+    // service[0] is the accessory name/manufacturer. 
+    // following that are the lights in service[1], service[2], ...
+    uint8_t service_idx = light_idx + 1; 
+
+    // Get the service and characteristics
+    homekit_accessory_t *accessory = accessories[0];
+    homekit_service_t *service = accessory->services[service_idx];
+
+    homekit_characteristic_t *on_c = service->characteristics[1];
+    homekit_characteristic_t *brightness_c = service->characteristics[2];
+
+    int brightness = brightness_c->value.int_value;
     brightness = MIN(100, brightness + 2*lights[light_idx].dim_direction);
     brightness = MAX(10, brightness);
-    (lights[light_idx].lightbulb_brightness)->value.int_value = brightness;
-    homekit_characteristic_notify(lights[light_idx].lightbulb_brightness, (lights[light_idx].lightbulb_brightness)->value);
+    brightness_c->value = HOMEKIT_INT(brightness);
+    homekit_characteristic_notify(brightness_c, HOMEKIT_INT(brightness));
 
-    bool on = (lights[light_idx].lightbulb_on)->value.bool_value;
+    bool on = on_c->value.bool_value;
     on = brightness > 0 ? true : false;
-    (lights[light_idx].lightbulb_on)->value.bool_value = on;
-    homekit_characteristic_notify(lights[light_idx].lightbulb_on, (lights[light_idx].lightbulb_on)->value);
+    on_c->value = HOMEKIT_BOOL(on);
+    homekit_characteristic_notify(on_c, HOMEKIT_BOOL(on));
 
     // don't continue running timer if max/min has been reached
     if ( brightness == 10 || brightness == 100) {
         xTimerStop(lights[light_idx].dim_timer, 0);
     }
 }
-
-homekit_characteristic_t name = HOMEKIT_CHARACTERISTIC_(NAME, "esp");
-
-homekit_accessory_t *accessories[] = {
-    HOMEKIT_ACCESSORY(.id=1, .category=homekit_accessory_category_lightbulb, .services=(homekit_service_t*[]){
-        HOMEKIT_SERVICE(ACCESSORY_INFORMATION, .characteristics=(homekit_characteristic_t*[]){
-            &name,
-            HOMEKIT_CHARACTERISTIC(MANUFACTURER, "HaPK"),
-            HOMEKIT_CHARACTERISTIC(SERIAL_NUMBER, "037A2BABF19D"),
-            HOMEKIT_CHARACTERISTIC(MODEL, "MyLights"),
-            HOMEKIT_CHARACTERISTIC(FIRMWARE_REVISION, "0.1"),
-            HOMEKIT_CHARACTERISTIC(IDENTIFY, status_led_identify),
-            NULL
-        }),
-        HOMEKIT_SERVICE(LIGHTBULB, .primary=true, .characteristics=(homekit_characteristic_t*[]){
-            HOMEKIT_CHARACTERISTIC(NAME, "Light 1"),
-            &lightbulb1_on,
-            &lightbulb1_brightness,
-            NULL
-        }),
-        HOMEKIT_SERVICE(LIGHTBULB, .characteristics=(homekit_characteristic_t*[]){
-            HOMEKIT_CHARACTERISTIC(NAME, "Light 2"),
-            &lightbulb2_on,
-            &lightbulb2_brightness,
-            NULL
-        }),
-        NULL
-    }),
-    NULL
-};
-
 
 // Need to call this function from a task different to the button_callback (executing in Tmr Svc)
 // Have had occurrences when, if called from button_callback directly, the scheduler seems
@@ -290,17 +229,29 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
             xTaskCreate(&start_ap_task, "Start AP", 1536, NULL, tskIDLE_PRIORITY, NULL);
         }
         else {
+            // service[0] is the accessory name/manufacturer. 
+            // following that are the lights in service[1], service[2], ...
+            uint8_t service_idx = light_idx + 1; 
+
+            // Get the service and characteristics
+            homekit_accessory_t *accessory = accessories[0];
+            homekit_service_t *service = accessory->services[service_idx];
+            homekit_characteristic_t *on_c = service->characteristics[1];
+            homekit_characteristic_t *brightness_c = service->characteristics[2];
+
             if (event_id == 1) {
                 // Toggle ON
-                (lights[light_idx].lightbulb_on)->value.bool_value = !(lights[light_idx].lightbulb_on)->value.bool_value;
-                homekit_characteristic_notify(lights[light_idx].lightbulb_on, (lights[light_idx].lightbulb_on)->value);
+                bool on = on_c->value.bool_value;
+                on_c->value = HOMEKIT_BOOL(!on);
+                homekit_characteristic_notify(on_c, HOMEKIT_BOOL(!on));
             } 
             else if (event_id == 2) {
                 // On and full brightness
-                (lights[light_idx].lightbulb_brightness)->value.int_value = 100;
-                homekit_characteristic_notify(lights[light_idx].lightbulb_brightness, (lights[light_idx].lightbulb_brightness)->value);
-                (lights[light_idx].lightbulb_on)->value.bool_value = true;
-                homekit_characteristic_notify(lights[light_idx].lightbulb_on, (lights[light_idx].lightbulb_on)->value);
+                brightness_c->value = HOMEKIT_INT(100);
+                homekit_characteristic_notify(brightness_c, HOMEKIT_INT(100));
+                on_c->value = HOMEKIT_BOOL(true);
+                homekit_characteristic_notify(on_c, HOMEKIT_BOOL(true));
+
                 lights[light_idx].dim_direction = -1;
             } 
 
@@ -333,69 +284,124 @@ void button_callback(button_event_t event, void* context) {
     esp_event_post(BUTTON_EVENT, event, context, sizeof(uint8_t), 10);
 }
 
+
 homekit_server_config_t config = {
     .accessories = accessories,
     .password = "111-11-111",
     .on_event = homekit_on_event,
 };
 
-void create_accessory_name() {
-    uint8_t mac;
-    esp_read_mac(&mac, 1);    
-    int name_len = snprintf( NULL, 0, "esp_%02x%02x%02x", (&mac)[3], (&mac)[4], (&mac)[5] );
-    char *name_value = malloc(name_len+1);
-    snprintf( name_value, name_len+1, "esp_%02x%02x%02x", (&mac)[3], (&mac)[4], (&mac)[5] ); 
-    name.value = HOMEKIT_STRING(name_value);
+void init_accessory() {
+    uint8_t macaddr[6];
+    esp_read_mac(macaddr, ESP_MAC_WIFI_STA);
+    int name_len = snprintf( NULL, 0, "esp_%02x%02x%02x", macaddr[3], macaddr[4], macaddr[5] );
+    char *name_value = malloc(name_len + 1);
+    snprintf( name_value, name_len + 1, "esp_%02x%02x%02x", macaddr[3], macaddr[4], macaddr[5] ); 
+
+    uint8_t num_lights = sizeof(lights)/sizeof(lights[0]);
+    homekit_service_t* services[num_lights + 1];
+    homekit_service_t** s = services;
+
+    *(s++) = NEW_HOMEKIT_SERVICE(ACCESSORY_INFORMATION, .characteristics=(homekit_characteristic_t*[]) {
+        NEW_HOMEKIT_CHARACTERISTIC(NAME, name_value),
+        NEW_HOMEKIT_CHARACTERISTIC(MANUFACTURER, "HaPK"),
+        NEW_HOMEKIT_CHARACTERISTIC(SERIAL_NUMBER, "037A2BABF19D"),
+        NEW_HOMEKIT_CHARACTERISTIC(MODEL, "MyLights"),
+        NEW_HOMEKIT_CHARACTERISTIC(FIRMWARE_REVISION, "0.1"),
+        NEW_HOMEKIT_CHARACTERISTIC(IDENTIFY, status_led_identify),
+        NULL
+    });
+
+    for (int i=0; i < num_lights; i++) {
+        int light_name_len = snprintf(NULL, 0, "Light %d", i + 1);
+        char *light_name_value = malloc(light_name_len + 1);
+        snprintf(light_name_value, light_name_len + 1, "Light %d", i + 1);
+
+        *(s++) = NEW_HOMEKIT_SERVICE(LIGHTBULB, .characteristics=(homekit_characteristic_t*[]) {
+            NEW_HOMEKIT_CHARACTERISTIC(NAME, light_name_value),
+            NEW_HOMEKIT_CHARACTERISTIC(
+                ON, false,
+                .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
+                    lightbulb_on_callback, .context=(void*)&lights[i]
+                ),
+            ),
+            NEW_HOMEKIT_CHARACTERISTIC(
+                BRIGHTNESS, 100,
+                .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
+                    lightbulb_brightness_callback, .context=(void*)&lights[i]
+                ),
+            ),
+            NULL
+        });
+    }
+
+    *(s++) = NULL;
+
+    accessories[0] = NEW_HOMEKIT_ACCESSORY(.category=homekit_accessory_category_lightbulb, .services=services);
+    accessories[1] = NULL;
+
 }
 
-void configure_peripherals() {
-    // Status/feedback LEDs on each button
-    gpio_config_t io_conf = {0};
-    io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = (1ULL<<lights[0].led_gpio) | (1ULL<<lights[1].led_gpio);
-    gpio_config(&io_conf);
 
-    gpio_set_level(lights[0].led_gpio, 1);      //1 is off
-    gpio_set_level(lights[1].led_gpio, 1);
+void configure_peripherals() {
+    uint8_t num_lights = sizeof(lights)/sizeof(lights[0]);
 
     // Status LED
     led_status = led_status_init(status_led_gpio, false);
 
-    // Button configuration
+    // 1. button configuration
     button_config_t button_config = BUTTON_CONFIG(
         BUTTON_ACTIVE_LOW,
         .repeat_press_timeout = 300,
         .long_press_time = 10000,
     );
-    button_create(lights[0].button_gpio, button_config, button_callback, &lights[0].idx);
-    button_create(lights[1].button_gpio, button_config, button_callback, &lights[1].idx);
 
-    // PWM configuration for dimming lights
-    uint32_t pins[] = { 
-        lights[0].light_gpio,
-        lights[1].light_gpio 
-    };
-    uint32_t duties[] = { 
-        lightbulb1_on.value.bool_value ? lightbulb1_brightness.value.int_value * PWM_PERIOD_IN_US/100 : 0, 
-        lightbulb2_on.value.bool_value ? lightbulb2_brightness.value.int_value * PWM_PERIOD_IN_US/100 : 0 
-    };
-    int16_t phases[] = { 
-        0, 
-        0 
-    };
-    pwm_init(PWM_PERIOD_IN_US, duties, sizeof(pins)/sizeof(pins[0]), pins);    
-    pwm_set_channel_invert((1<<0) | (1<<1));        // parameter is a bit mask
+    // 2. status/feedback LEDs on each button
+    gpio_config_t io_conf = {0};
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    io_conf.pin_bit_mask = 0; 
+
+    // 3. PWM configuration for dimming lights
+    uint32_t pins[num_lights];
+    uint32_t duties[num_lights];
+    int16_t phases[num_lights];
+    uint8_t pwm_invert_mask = 0;
+
+    for (int i=0; i < num_lights; i++) {
+        // 1. button 
+        button_create(lights[i].button_gpio, button_config, button_callback, &lights[i].idx);
+
+        // 2. button feedback LED - add to bit mask ready for configuration
+        io_conf.pin_bit_mask |= (1ULL<<lights[i].led_gpio);
+
+        // 3. PWM configuration - add to pins array ready for configuration
+        pins[i] = lights[i].light_gpio;
+        duties[i] = 0;
+        phases[i] = 0;
+        pwm_invert_mask |= (1<<i);
+
+        // 3a. PWM - create timer for long button hold - dimming function
+        int dim_name_len = snprintf(NULL, 0, "dim%d", i + 1);
+        char *dim_name_value = malloc(dim_name_len + 1);
+        snprintf(dim_name_value, dim_name_len + 1, "dim%d", i + 1);
+        // 100ms per 2% is 5s
+        lights[i].dim_timer = xTimerCreate(
+            dim_name_value, pdMS_TO_TICKS(100), pdTRUE, &lights[i].idx, light_dim_timer_callback
+        );
+    }
+
+    // 2. configure button feedback LEDs
+    gpio_config(&io_conf);
+    // turn off (1 = off)
+    for (int i=0; i < num_lights; i++) {
+        gpio_set_level(lights[i].led_gpio, 1);
+    }
+
+    // 3. configure PWM
+    pwm_init(PWM_PERIOD_IN_US, duties, num_lights, pins);    
+    pwm_set_channel_invert(pwm_invert_mask);        // parameter is a bit mask
     pwm_set_phases(phases);                         // throws an error if not set (even if it's 0)
     pwm_start();
-
-    // 100ms per 2% is 5s
-    lights[0].dim_timer = xTimerCreate(
-        "dim0", pdMS_TO_TICKS(100), pdTRUE, &lights[0].idx, light_dim_timer_callback
-    );
-    lights[1].dim_timer = xTimerCreate(
-        "dim1", pdMS_TO_TICKS(100), pdTRUE, &lights[1].idx, light_dim_timer_callback
-    );
-
 }
 
 void app_main(void)
@@ -449,9 +455,8 @@ void app_main(void)
   
     wifi_init();
  
-    create_accessory_name();
+    init_accessory();
     homekit_server_init(&config);
-
     paired = homekit_is_paired();
 
 

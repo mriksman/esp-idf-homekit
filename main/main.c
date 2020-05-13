@@ -301,6 +301,7 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
                 homekit_characteristic_notify(lights[light_idx].lightbulb_brightness, (lights[light_idx].lightbulb_brightness)->value);
                 (lights[light_idx].lightbulb_on)->value.bool_value = true;
                 homekit_characteristic_notify(lights[light_idx].lightbulb_on, (lights[light_idx].lightbulb_on)->value);
+                lights[light_idx].dim_direction = -1;
             } 
 
 

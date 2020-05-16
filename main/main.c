@@ -31,6 +31,8 @@ ESP_EVENT_DEFINE_BASE(HOMEKIT_EVENT);           // Convert esp-homekit events in
 #include "pwm.h"
 #define PWM_PERIOD_IN_US    1000                // in microseconds (1000us = 1kHz)
 
+#include "lights.h"                             // common struct used for NVS read/write of lights config
+
 #include "esp_log.h"
 static const char *TAG = "main";
 
@@ -52,37 +54,18 @@ static led_status_pattern_t identify = LED_STATUS_PATTERN({100, -100, 100, -350,
 #include "esp_image_format.h"
 // **************************************************
 
-
-// use variables instead of defines to pass these values around as context/args
-static uint8_t status_led_gpio = 2;
-
 typedef struct {
+    lights_t config;
+    // private
     uint8_t idx;
-    uint8_t button_gpio;
-    uint8_t light_gpio;
-    uint8_t led_gpio;
     TimerHandle_t dim_timer;
     int8_t dim_direction;
+    uint8_t pwm_channel;
 } light_service_t;
 
-static light_service_t lights[] = { 
-    {
-    .idx = 0,
-    .button_gpio = GPIO_NUM_16,     //D0
-    .light_gpio = GPIO_NUM_13,      //D7
-    .led_gpio = GPIO_NUM_12,        //D6
-    .dim_direction = -1,
-    },
-    {
-    .idx = 1,
-    .button_gpio = GPIO_NUM_5,      //D1 (will need to be GPIO 3 (RX) in final code)
-    .light_gpio = GPIO_NUM_4,       //D2
-    .led_gpio = GPIO_NUM_14,        //D5
-    .dim_direction = -1,
-    }
-};
+static light_service_t *lights;
 
-homekit_accessory_t *accessories[2];
+static homekit_accessory_t *accessories[2];
 
 
 void status_led_identify(homekit_value_t _value) {
@@ -95,19 +78,25 @@ void lightbulb_on_callback(homekit_characteristic_t *_ch, homekit_value_t value,
         return;
     }
 
-    homekit_characteristic_t *brightness_c = homekit_service_characteristic_by_type(
-                _ch->service, HOMEKIT_CHARACTERISTIC_BRIGHTNESS 
-            );
-    light_service_t light = *((light_service_t*) context);
+    uint8_t light_idx = *((uint8_t*) context);
 
-    pwm_set_duty(light.idx, value.bool_value ? brightness_c->value.int_value * PWM_PERIOD_IN_US/100 : 0);
-    pwm_start();
+    if (lights[light_idx].config.is_dimmer) {
+        homekit_characteristic_t *brightness_c = homekit_service_characteristic_by_type(
+                    _ch->service, HOMEKIT_CHARACTERISTIC_BRIGHTNESS 
+                );
 
-    // if the light is turned off, set the direction up for the next time the light turns on
-    //  it makes sense that, if it turns on greater than 50% brightness, that the next
-    //  dim direction should be to dim the lights.
-    if (value.bool_value == false) {
-        lights[light.idx].dim_direction = brightness_c->value.int_value > 50 ? -1 : 1;
+        pwm_set_duty(lights[light_idx].pwm_channel, value.bool_value ? brightness_c->value.int_value * PWM_PERIOD_IN_US/100 : 0);
+        pwm_start();
+
+        // if the light is turned off, set the direction up for the next time the light turns on
+        //  it makes sense that, if it turns on greater than 50% brightness, that the next
+        //  dim direction should be to dim the lights.
+        if (value.bool_value == false) {
+            lights[light_idx].dim_direction = brightness_c->value.int_value > 50 ? -1 : 1;
+        }
+    }
+    else {
+        gpio_set_level(lights[light_idx].config.light_gpio, !value.bool_value);    // light GPIO is inverted
     }
 
 }
@@ -117,9 +106,9 @@ void lightbulb_brightness_callback(homekit_characteristic_t *_ch, homekit_value_
         ESP_LOGE(TAG, "Invalid value format: %d", value.format);
         return;
     }
-    light_service_t light = *((light_service_t*) context);
+    uint8_t light_idx = *((uint8_t*) context);
 
-    pwm_set_duty(light.idx, value.int_value * PWM_PERIOD_IN_US/100);
+    pwm_set_duty(lights[light_idx].pwm_channel, value.int_value * PWM_PERIOD_IN_US/100);
     pwm_start();
 
 }
@@ -208,18 +197,22 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
         uint8_t light_idx = *((uint8_t*) event_data);
 
         if (event_id == BUTTON_EVENT_UP) {
-            gpio_set_level(lights[light_idx].led_gpio, 1);
+            gpio_set_level(lights[light_idx].config.led_gpio, 1);
         }
         else if (event_id == BUTTON_EVENT_DOWN) {
-            gpio_set_level(lights[light_idx].led_gpio, 0);
+            gpio_set_level(lights[light_idx].config.led_gpio, 0);
         }
 
         else if (event_id == BUTTON_EVENT_DOWN_HOLD) {
-            xTimerStart(lights[light_idx].dim_timer, 0);
+            if (lights[light_idx].config.is_dimmer) {
+                xTimerStart(lights[light_idx].dim_timer, 0);
+            }
         }
         else if (event_id == BUTTON_EVENT_UP_HOLD) {
-            xTimerStop(lights[light_idx].dim_timer, 0);
-            lights[light_idx].dim_direction *= -1;
+            if (lights[light_idx].config.is_dimmer) {
+                xTimerStop(lights[light_idx].dim_timer, 0);
+                lights[light_idx].dim_direction *= -1;
+            }
         }
 
         else if (event_id == BUTTON_EVENT_LONG_PRESS) {
@@ -246,13 +239,15 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
                 homekit_characteristic_notify(on_c, HOMEKIT_BOOL(!on));
             } 
             else if (event_id == 2) {
-                // On and full brightness
-                brightness_c->value = HOMEKIT_INT(100);
-                homekit_characteristic_notify(brightness_c, HOMEKIT_INT(100));
-                on_c->value = HOMEKIT_BOOL(true);
-                homekit_characteristic_notify(on_c, HOMEKIT_BOOL(true));
+                if (lights[light_idx].config.is_dimmer) {
+                    // On and full brightness
+                    brightness_c->value = HOMEKIT_INT(100);
+                    homekit_characteristic_notify(brightness_c, HOMEKIT_INT(100));
+                    on_c->value = HOMEKIT_BOOL(true);
+                    homekit_characteristic_notify(on_c, HOMEKIT_BOOL(true));
 
-                lights[light_idx].dim_direction = -1;
+                    lights[light_idx].dim_direction = -1;
+                }
             } 
 
 
@@ -291,14 +286,13 @@ homekit_server_config_t config = {
     .on_event = homekit_on_event,
 };
 
-void init_accessory() {
+void init_accessory(uint8_t num_lights) {
     uint8_t macaddr[6];
     esp_read_mac(macaddr, ESP_MAC_WIFI_STA);
     int name_len = snprintf( NULL, 0, "esp_%02x%02x%02x", macaddr[3], macaddr[4], macaddr[5] );
     char *name_value = malloc(name_len + 1);
     snprintf( name_value, name_len + 1, "esp_%02x%02x%02x", macaddr[3], macaddr[4], macaddr[5] ); 
 
-    uint8_t num_lights = sizeof(lights)/sizeof(lights[0]);
     homekit_service_t* services[num_lights + 1];
     homekit_service_t** s = services;
 
@@ -317,37 +311,84 @@ void init_accessory() {
         char *light_name_value = malloc(light_name_len + 1);
         snprintf(light_name_value, light_name_len + 1, "Light %d", i + 1);
 
-        *(s++) = NEW_HOMEKIT_SERVICE(LIGHTBULB, .characteristics=(homekit_characteristic_t*[]) {
-            NEW_HOMEKIT_CHARACTERISTIC(NAME, light_name_value),
-            NEW_HOMEKIT_CHARACTERISTIC(
+        homekit_characteristic_t* characteristics[lights[i].config.is_dimmer ? 3 : 2]; // NAME, ON and if a dimmer BRIGHTNESS
+        homekit_characteristic_t** c = characteristics;
+
+        *(c++) = NEW_HOMEKIT_CHARACTERISTIC(NAME, light_name_value);
+        *(c++) = NEW_HOMEKIT_CHARACTERISTIC(
                 ON, false,
                 .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
-                    lightbulb_on_callback, .context=(void*)&lights[i]
+                    lightbulb_on_callback, .context=(void*)&lights[i].idx
                 ),
-            ),
-            NEW_HOMEKIT_CHARACTERISTIC(
-                BRIGHTNESS, 100,
-                .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
-                    lightbulb_brightness_callback, .context=(void*)&lights[i]
-                ),
-            ),
-            NULL
-        });
-    }
+            );
+        if (lights[i].config.is_dimmer) {
+            *(c++) = NEW_HOMEKIT_CHARACTERISTIC(
+                    BRIGHTNESS, 100,
+                    .callback=HOMEKIT_CHARACTERISTIC_CALLBACK(
+                        lightbulb_brightness_callback, .context=(void*)&lights[i].idx
+                    ),
+                );
+        }
+        *(c++) = NULL;
 
+        *(s++) = NEW_HOMEKIT_SERVICE(LIGHTBULB, .characteristics=characteristics);
+    }
     *(s++) = NULL;
 
     accessories[0] = NEW_HOMEKIT_ACCESSORY(.category=homekit_accessory_category_lightbulb, .services=services);
     accessories[1] = NULL;
-
 }
 
 
-void configure_peripherals() {
-    uint8_t num_lights = sizeof(lights)/sizeof(lights[0]);
+esp_err_t configure_peripherals(uint8_t num_lights) {
+    esp_err_t err;
+    lights = (light_service_t*)calloc(num_lights, sizeof(light_service_t));
+    if (lights == NULL) {
+        ESP_LOGE(TAG, "couldn't allocate mem for light_service_t");
+        return ESP_FAIL; 
+    }
 
-    // Status LED
-    led_status = led_status_init(status_led_gpio, false);
+    nvs_handle lights_config_handle;
+    err = nvs_open("lights", NVS_READWRITE, &lights_config_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open err %d ", err);
+        return err;
+    }
+
+    lights_t light_config[num_lights];
+    size_t size = num_lights * sizeof(lights_t);
+    err = nvs_get_blob(lights_config_handle, "config", light_config, &size);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_get_blob config err %d ", err);
+        return err;
+    }
+
+    ESP_LOGI(TAG, 
+        "          Light  LED   Button  Dimmable? ");
+    for (uint8_t i = 0; i < num_lights; i++) {
+        ESP_LOGI(TAG, 
+        "Light %d    %2d     %2d      %2d      %s", (i + 1), light_config[i].light_gpio, light_config[i].led_gpio, 
+                                                             light_config[i].button_gpio, light_config[i].is_dimmer ? "true" : "false");
+    }
+
+    for (uint8_t i = 0; i < num_lights; i++) {
+        lights[i].config.light_gpio = light_config[i].light_gpio; 
+        lights[i].config.led_gpio  = light_config[i].led_gpio;
+        lights[i].config.button_gpio  = light_config[i].button_gpio;
+        lights[i].config.is_dimmer = light_config[i].is_dimmer; 
+    }
+
+/*
+    lights[0].config.light_gpio = GPIO_NUM_13;      //D7
+    lights[0].config.led_gpio = GPIO_NUM_12;        //D6
+    lights[0].config.button_gpio = GPIO_NUM_16;     //D0
+    lights[0].config.is_dimmer = false;
+
+    lights[1].config.light_gpio = GPIO_NUM_4;       //D2
+    lights[1].config.led_gpio = GPIO_NUM_14;        //D5
+    lights[1].config.button_gpio = GPIO_NUM_5;      //D1 (will need to be GPIO 3 (RX) in final code)
+    lights[1].config.is_dimmer = true;
+*/
 
     // 1. button configuration
     button_config_t button_config = BUTTON_CONFIG(
@@ -356,56 +397,106 @@ void configure_peripherals() {
         .long_press_time = 10000,
     );
 
-    // 2. status/feedback LEDs on each button
+    // 2. status/feedback LEDs on each button 
+    //     OR 
+    //    standard ON/OFF output for Light (not PWM/dimming)
     gpio_config_t io_conf = {0};
     io_conf.mode = GPIO_MODE_OUTPUT;
     io_conf.pin_bit_mask = 0; 
 
     // 3. PWM configuration for dimming lights
-    uint32_t pins[num_lights];
-    uint32_t duties[num_lights];
-    int16_t phases[num_lights];
+    uint8_t num_dimming_lights = 0;
+    uint8_t i_pwm = 0;
+    for (uint8_t i = 0; i < num_lights; i++) {
+        if (lights[i].config.is_dimmer) {
+            num_dimming_lights++;
+        }   
+    }
+/*
+    uint32_t *pins = (uint32_t*)calloc(num_dimming_lights, sizeof(uint32_t));
+    uint32_t *duties = (uint32_t*)calloc(num_dimming_lights, sizeof(uint32_t));
+    int16_t *phases = (int16_t*)calloc(num_dimming_lights, sizeof(int16_t));
+*/
+    uint32_t pins[num_dimming_lights];
+    uint32_t duties[num_dimming_lights];
+    int16_t phases[num_dimming_lights];
     uint8_t pwm_invert_mask = 0;
 
-    for (int i=0; i < num_lights; i++) {
+    for (uint8_t i = 0; i < num_lights; i++) {
+        lights[i].idx = i;
+
         // 1. button 
-        button_create(lights[i].button_gpio, button_config, button_callback, &lights[i].idx);
+        err = button_create(lights[i].config.button_gpio, button_config, button_callback, &lights[i].idx);
+        if (err != ESP_OK) {
+            return err;
+        }
 
         // 2. button feedback LED - add to bit mask ready for configuration
-        io_conf.pin_bit_mask |= (1ULL<<lights[i].led_gpio);
+        io_conf.pin_bit_mask |= (1ULL<<lights[i].config.led_gpio);
 
-        // 3. PWM configuration - add to pins array ready for configuration
-        pins[i] = lights[i].light_gpio;
-        duties[i] = 0;
-        phases[i] = 0;
-        pwm_invert_mask |= (1<<i);
+        if (lights[i].config.is_dimmer) {
+            // 3a. PWM configuration - add to pins array ready for configuration
+            pins[i_pwm] = lights[i].config.light_gpio;
+            duties[i_pwm] = 0;
+            phases[i_pwm] = 0;
+            pwm_invert_mask |= (1<<i_pwm);
 
-        // 3a. PWM - create timer for long button hold - dimming function
-        int dim_name_len = snprintf(NULL, 0, "dim%d", i + 1);
-        char *dim_name_value = malloc(dim_name_len + 1);
-        snprintf(dim_name_value, dim_name_len + 1, "dim%d", i + 1);
-        // 100ms per 2% is 5s
-        lights[i].dim_timer = xTimerCreate(
-            dim_name_value, pdMS_TO_TICKS(100), pdTRUE, &lights[i].idx, light_dim_timer_callback
-        );
+            // create timer for long button hold - dimming function
+            int dim_name_len = snprintf(NULL, 0, "dim%d", i + 1);
+            char *dim_name_value = malloc(dim_name_len + 1);
+            snprintf(dim_name_value, dim_name_len + 1, "dim%d", i + 1);
+            // 100ms per 2% is 5s
+            lights[i].dim_timer = xTimerCreate(
+                dim_name_value, pdMS_TO_TICKS(100), pdTRUE, &lights[i].idx, light_dim_timer_callback
+            );
+
+            lights[i].dim_direction = -1;
+
+            // store PWM channel number and incrememnt
+            lights[i].pwm_channel = i_pwm;
+            i_pwm++;
+        }
+        else {
+            // 3b. Not PWM. GPIO will be standard OUTPUT driving a relay/lightswitch
+            //      Add to list of GPIO that will be OUTPUT
+            io_conf.pin_bit_mask |= (1ULL<<lights[i].config.light_gpio);
+        }
     }
 
-    // 2. configure button feedback LEDs
-    gpio_config(&io_conf);
-    // turn off (1 = off)
-    for (int i=0; i < num_lights; i++) {
-        gpio_set_level(lights[i].led_gpio, 1);
+    // 2. configure button feedback LEDs and standard on/off lights (not dimming)
+    err = gpio_config(&io_conf);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    // turn off all status feedback LEDs (1 = off) and Lights that aren't PWM (1 = off)
+    for (uint8_t i = 0; i < num_lights; i++) {
+        gpio_set_level(lights[i].config.led_gpio, 1);
+        if (!lights[i].config.is_dimmer) {
+            gpio_set_level(lights[i].config.light_gpio, 1);
+        }
     }
 
     // 3. configure PWM
-    pwm_init(PWM_PERIOD_IN_US, duties, num_lights, pins);    
-    pwm_set_channel_invert(pwm_invert_mask);        // parameter is a bit mask
-    pwm_set_phases(phases);                         // throws an error if not set (even if it's 0)
-    pwm_start();
+    if (num_dimming_lights > 0) {
+        pwm_init(PWM_PERIOD_IN_US, duties, num_dimming_lights, pins);    
+        pwm_set_channel_invert(pwm_invert_mask);        // parameter is a bit mask
+        pwm_set_phases(phases);                         // throws an error if not set (even if it's 0)
+        pwm_start();
+    }
+/*
+    free(pins);
+    free(duties);
+    free(phases);
+*/
+    nvs_close(lights_config_handle);
+    return ESP_OK;
 }
 
 void app_main(void)
 {
+    esp_err_t err;
+
     esp_log_level_set("*", ESP_LOG_DEBUG);      
     esp_log_level_set("httpd", ESP_LOG_INFO); 
     esp_log_level_set("httpd_uri", ESP_LOG_INFO);    
@@ -415,20 +506,15 @@ void app_main(void)
     esp_log_level_set("vfs", ESP_LOG_INFO);     
     esp_log_level_set("esp_timer", ESP_LOG_INFO);     
  
-    // Initialize NVS.
-    #ifdef CONFIG_IDF_TARGET_ESP32
-        esp_err_t err = nvs_flash_init();
-        if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
-            ESP_ERROR_CHECK(nvs_flash_erase());
-            err = nvs_flash_init();
-        }
-        ESP_ERROR_CHECK(err);
-    #elif CONFIG_IDF_TARGET_ESP8266
-        // nvs_flash_init() is called in startup.c with assert == ESP_OK. So if you change 
-        //  partition size, this will fail. Comment the assert out and then nvs_flash_erase()      
-    #endif
-
-
+    // Initialize NVS. 
+    // Note: esp82666 calls assert(nvs_flash_init()) in startup.c before app_main()
+    // so this will have failed before reaching here. use 'idf.py erase_flash'
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES) {     // can happen if truncated/partition size changed
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
 
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
@@ -451,15 +537,40 @@ void app_main(void)
         esp_event_loop_init(legacy_event_handler, NULL);
     #endif
 
-    configure_peripherals();
-  
     wifi_init();
- 
-    init_accessory();
-    homekit_server_init(&config);
-    paired = homekit_is_paired();
 
 
+    nvs_handle lights_config_handle;
+    err = nvs_open("lights", NVS_READWRITE, &lights_config_handle);
+    if (err == ESP_OK) {
+        // Status LED
+        uint8_t status_led_gpio = 0;
+        err = nvs_get_u8(lights_config_handle, "status_led", &status_led_gpio); 
+        if (err == ESP_OK) {
+            led_status = led_status_init(status_led_gpio, false);
+        }
+        else {
+            ESP_LOGW(TAG, "error nvs_get_u8 status_led err %d", err);
+        }
+
+        // Get configured number of lights
+        uint8_t num_lights = 0;
+        err = nvs_get_u8(lights_config_handle, "num_lights", &num_lights);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "error nvs_get_u8 num_lights err %d", err);
+        }
+        nvs_close(lights_config_handle);
+        if (num_lights > 0) {
+            if (configure_peripherals(num_lights) == ESP_OK) {
+                init_accessory(num_lights);
+                homekit_server_init(&config);
+                paired = homekit_is_paired();
+            }
+        }
+    }
+    else {
+        ESP_LOGE(TAG, "nvs_open err %d ", err);
+    }
 
 
 /*

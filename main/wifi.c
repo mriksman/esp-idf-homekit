@@ -20,9 +20,10 @@ static const char *TAG = "mywifi";
 
 static int s_retry_num = 0;
 
-//static esp_timer_handle_t s_wifi_reconnect_timer;
+static TimerHandle_t g_retry_connect_timer = NULL;
+static TimerHandle_t g_stop_delay_timer = NULL;
 static SemaphoreHandle_t g_wifi_mutex = NULL;
-static TaskHandle_t retry_connect_task_handle = NULL;
+//static TaskHandle_t retry_connect_task_handle = NULL;
 
 
 
@@ -33,6 +34,20 @@ SemaphoreHandle_t* get_wifi_mutex() {
     return &g_wifi_mutex;
 }
 
+static void retry_connect_callback(TimerHandle_t timer) {
+    ESP_LOGI(TAG, "Retry connection task");
+    if( xSemaphoreTake(g_wifi_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        esp_wifi_connect();
+    } else {
+        ESP_LOGI(TAG, "Wi-Fi scan in progress");
+    }
+}
+
+static void stop_delay_callback(TimerHandle_t timer) {
+    stop_ap_prov();
+}
+
+/*
 static void retry_connect_task(void * arg)
 {
     for(;;) {
@@ -45,16 +60,20 @@ static void retry_connect_task(void * arg)
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
+*/
 
 /* Event handler for Wi-Fi Events */
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT) {
-        if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+        if (event_id == WIFI_EVENT_AP_STACONNECTED) {
+            xTimerStop(g_stop_delay_timer, 0);
+        }
+        else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+            esp_err_t err;
             wifi_sta_list_t connected_clients;
-            esp_wifi_ap_get_sta_list(&connected_clients);
-
-    ESP_LOGI(TAG, "num stations left %d", connected_clients.num);
+            err = esp_wifi_ap_get_sta_list(&connected_clients);
+            ESP_LOGI(TAG, "num stations left %d, errno %d", connected_clients.num, err);
 
             #ifdef CONFIG_IDF_TARGET_ESP32
                 esp_netif_ip_info_t ip_info;
@@ -67,21 +86,22 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 bool if_status = tcpip_adapter_is_netif_up(TCPIP_ADAPTER_IF_STA);
             #endif
 
-            if (if_status && connected_clients.num == 0) {
+            // if the ESP is connected to an AP (router), and the last client disconnects, stop softAP
+            if (if_status && err == ESP_OK && connected_clients.num == 0) {
                 ESP_LOGI(TAG, "Last client disconnected from AP and ESP is connected to STA. Shutting down Soft AP");
                 stop_ap_prov();
             }
-
-        } else if (event_id == WIFI_EVENT_STA_START) {
-            // If no valid SSID was found in NVS, then this will fail
+        } 
+        else if (event_id == WIFI_EVENT_STA_START) {
+            // event generated with esp_wifi_start()
             esp_wifi_connect();
-
-        } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        } 
+        else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
 
             #ifdef CONFIG_IDF_TARGET_ESP8266
-            // ESP8266 RTOS SDK will continually retry every 2 seconds. To override, 
-            //  (and to keep consistent with ESP-IDF) call esp_wifi_disconnect()
-            esp_wifi_disconnect();
+                // ESP8266 RTOS SDK will continually retry every 2 seconds. To override, 
+                //  (and to keep consistent with ESP-IDF) call esp_wifi_disconnect()
+                esp_wifi_disconnect();
             #endif
 
             // Connect failed/finished, give back Mutex.
@@ -102,12 +122,16 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                     esp_wifi_start();       // to router (no AP found), and soft AP is not visible
                 }
                 // Keep trying to connect to existing AP at a slower rate
+                /*
                 if (retry_connect_task_handle == NULL) {
                     xTaskCreate(&retry_connect_task, "retry_connect", 1024, NULL, tskIDLE_PRIORITY, &retry_connect_task_handle);
                 }
+                */
+                xTimerStart(g_retry_connect_timer, 0);
             }
         }
-    } else if (event_base == IP_EVENT) {
+    } 
+    else if (event_base == IP_EVENT) {
         if (event_id == IP_EVENT_STA_GOT_IP) {
             s_retry_num = 0;
 
@@ -115,18 +139,22 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
             xSemaphoreGive(g_wifi_mutex);
 
             // Stop periodic connection retry attempts
+/*
             if (retry_connect_task_handle != NULL) {
                 vTaskDelete(retry_connect_task_handle);
                 retry_connect_task_handle = NULL;
             }
+*/
+            xTimerStop(g_retry_connect_timer, 0);
 
             wifi_mode_t wifi_mode;
             esp_wifi_get_mode(&wifi_mode);
             wifi_sta_list_t connected_clients;
             esp_wifi_ap_get_sta_list(&connected_clients);
             if (wifi_mode == WIFI_MODE_APSTA && connected_clients.num == 0) {
-                ESP_LOGI(TAG, "Got an IP from STA, and no clients connected to Soft AP");
-                stop_ap_prov();
+                ESP_LOGI(TAG, "Got an IP from STA, and no clients connected to Soft AP. Stopping Soft AP in %d seconds...", STOP_AP_DELAY/1000);
+                xTimerStart(g_stop_delay_timer, 0);
+                //stop_ap_prov();
             }
         }
     } 
@@ -156,22 +184,18 @@ void start_ap_prov() {
         ESP_LOGW(TAG, "No previous SSID found. Set to ssid %s  ", (const char*) wifi_ap_config.ap.ssid);
     }
 
-//    esp_err_t err;
     start_webserver();
         
     ESP_LOGI(TAG, "Started softAP and HTTPD Service");
-
 }
 
 void stop_ap_prov() {
     // Shutdown soft AP
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    esp_wifi_set_mode(WIFI_MODE_STA);
     stop_webserver();
 
     ESP_LOGI(TAG, "Stopped softAP and HTTPD Service");
-
 }
-
 
 void wifi_init()
 {
@@ -188,11 +212,13 @@ void wifi_init()
 
     // esp_event_handler_register is being deprecated
     #ifdef CONFIG_IDF_TARGET_ESP32
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, wifi_event_handler, NULL, NULL));
         ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, wifi_event_handler, NULL, NULL));
         ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_START, wifi_event_handler, NULL, NULL));
         ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_event_handler, NULL, NULL));
         ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL, NULL));
     #elif CONFIG_IDF_TARGET_ESP8266
+        ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, wifi_event_handler, NULL));
         ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, wifi_event_handler, NULL));
         ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, wifi_event_handler, NULL));
         ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_event_handler, NULL));
@@ -202,15 +228,14 @@ void wifi_init()
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
+/*
     // Check to see if it has previosuly been provisioned.
     bool provisioned = false;
 
     wifi_config_t wifi_cfg;
-    if (esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_cfg) != ESP_OK) {
- 
-    } else if (strlen((const char*) wifi_cfg.sta.ssid)) {
+    if ( esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_cfg) == ESP_OK  && 
+         strlen((const char*) wifi_cfg.sta.ssid) ) {
         ESP_LOGI(TAG, "Found ssid %s",     (const char*) wifi_cfg.sta.ssid);
-        ESP_LOGI(TAG, "Found password %s", (const char*) wifi_cfg.sta.password);
         provisioned = true;
     }
 
@@ -219,6 +244,20 @@ void wifi_init()
     } else  {
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
     }
+*/
+
+    // Always start softAP. If it connects to an AP, it stops after STOP_AP_DELAY.
+    //  this allows the user to connect to the softAP after start-up in case a button wasn't
+    //  configured (and thus, you can't access the configuration page)
+    start_ap_prov();
+
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    g_retry_connect_timer = xTimerCreate(
+        "retry_connect", pdMS_TO_TICKS(10000), pdTRUE, NULL, retry_connect_callback
+    );
+    g_stop_delay_timer = xTimerCreate(
+        "delay_stop_ap", pdMS_TO_TICKS(STOP_AP_DELAY), pdFALSE, NULL, stop_delay_callback
+    );
 
 }

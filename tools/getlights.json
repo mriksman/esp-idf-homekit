@@ -1,0 +1,17 @@
+{
+	"status_led":2,
+	"lights":[
+		{
+		 "light_gpio":16,
+		 "led_gpio":13,
+		 "button_gpio":12,
+		 "is_dimmer":true
+		},
+		{
+		 "light_gpio":5,
+		 "led_gpio":4,
+		 "button_gpio":14,
+		 "is_dimmer":false
+		}
+	]
+}

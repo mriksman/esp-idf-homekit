@@ -91,6 +91,10 @@ void led_status_done(led_status_t *status) {
 }
 
 void led_status_set(led_status_t *status, led_status_pattern_t *pattern) {
+    // if led_status_init has not been called and led_status_t pointer is NULL; just return
+    if (status == NULL)
+        return;
+
     status->pattern = pattern;
 
     if (!status->signal_pattern) {
@@ -100,6 +104,9 @@ void led_status_set(led_status_t *status, led_status_pattern_t *pattern) {
 }
 
 void led_status_signal(led_status_t *status, led_status_pattern_t *pattern) {
+    if (status == NULL)
+        return;
+
     if (!status->signal_pattern && !pattern)
         return;
 

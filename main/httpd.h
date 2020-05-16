@@ -4,8 +4,6 @@
 extern "C" {
 #endif
 
-#include <esp_http_server.h>
-
 #define MAX_AP_COUNT 10
 #define LOG_BUF_MAX_LINE_SIZE 160
 #define MAX_SSE_CLIENTS 3

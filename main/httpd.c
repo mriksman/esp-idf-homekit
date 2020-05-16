@@ -15,6 +15,7 @@
 #include "wifi.h"
 #include "httpd.h"
 #include <homekit/homekit.h>
+#include "lights.h"
 
 #include "esp_log.h"
 static const char *TAG = "myhttpd";
@@ -495,6 +496,211 @@ esp_err_t update_boot_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+
+
+
+
+/* GET handler for /getlights.json. Gets light config from NVS */
+esp_err_t getlights_json_handler(httpd_req_t *req)
+{
+    esp_err_t err;
+
+    nvs_handle lights_config_handle;
+    err = nvs_open("lights", NVS_READWRITE, &lights_config_handle);
+    if (err == ESP_OK) {
+        char *out;
+        cJSON *root, *lights_json, *fld;
+
+        root = cJSON_CreateObject();
+
+        // Status LED
+        uint8_t status_led_gpio = 0;
+        err = nvs_get_u8(lights_config_handle, "status_led", &status_led_gpio); 
+        if (err == ESP_OK) {
+            cJSON_AddItemToObject(root, "status_led", cJSON_CreateNumber(status_led_gpio));
+        }
+        else {
+            ESP_LOGW(TAG, "error nvs_get_u8 status_led err %d", err);
+        }
+
+        // Get configured number of lights
+        uint8_t num_lights = 0;
+        err = nvs_get_u8(lights_config_handle, "num_lights", &num_lights);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "error nvs_get_u8 num_lights err %d", err);
+        }
+
+        if (num_lights > 0) {
+            lights_t light_config[num_lights];
+            size_t size = num_lights * sizeof(lights_t);
+            err = nvs_get_blob(lights_config_handle, "config", light_config, &size);
+            if (err == ESP_OK) {
+                lights_json = cJSON_CreateArray();
+                cJSON_AddItemToObject(root, "lights", lights_json);
+
+                for (int i = 0; i < num_lights; i++) {
+                    cJSON_AddItemToArray(lights_json, fld = cJSON_CreateObject());
+                    cJSON_AddItemToObject(fld, "light_gpio", cJSON_CreateNumber(light_config[i].light_gpio));
+                    cJSON_AddItemToObject(fld, "led_gpio", cJSON_CreateNumber(light_config[i].led_gpio));
+                    cJSON_AddItemToObject(fld, "button_gpio", cJSON_CreateNumber(light_config[i].button_gpio));
+                    cJSON_AddItemToObject(fld, "is_dimmer", cJSON_CreateBool(light_config[i].is_dimmer));
+                }
+            }
+            else {
+                ESP_LOGW(TAG, "error nvs_get_u8 num_lights err %d", err);
+            }
+
+            nvs_close(lights_config_handle);
+        }
+
+        out = cJSON_PrintUnformatted(root);
+        
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+        httpd_resp_set_hdr(req, "Pragma", "no-cache");
+        httpd_resp_send(req, out, strlen(out));      
+
+        /* free all objects under root and root itself */
+        cJSON_Delete(root);
+        free(out);
+    }
+    else {
+        ESP_LOGE(TAG, "nvs_open err %d ", err);
+        httpd_resp_set_status(req, HTTPD_500);
+        httpd_resp_send(req, NULL, 0);
+    }
+
+    return ESP_OK;
+}
+
+
+/* POST handler for /setlights.json. Taks json and saves to NVS */
+esp_err_t setlights_json_handler(httpd_req_t *req)
+{
+    esp_err_t err;
+
+    int total_len = req->content_len;
+    int cur_len = 0;
+    char buf[SCRATCH_BUFSIZE];
+    int received = 0;
+
+    if (total_len >= SCRATCH_BUFSIZE) {
+        // Client will not receive response if it hasn't finished sending the POST data
+        // Can't store to buffer (too big), so just close connection
+        return ESP_FAIL;
+    }
+    while (cur_len < total_len) {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0) {
+            if (received == HTTPD_SOCK_ERR_TIMEOUT) {
+                    // Retry if timeout occurred
+                    continue;
+                }
+                ESP_LOGE(TAG, "JSON reception failed!");
+                return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[total_len] = '\0';
+
+    nvs_handle lights_config_handle;
+    err = nvs_open("lights", NVS_READWRITE, &lights_config_handle);
+    if (err == ESP_OK) {
+        cJSON *root = cJSON_Parse(buf);
+
+        // Status LED
+        cJSON *status_led_json = cJSON_GetObjectItem(root, "status_led");
+        if (cJSON_IsNumber(status_led_json) && status_led_json->valueint >= 0) { 
+            if (status_led_json->valueint <= 16 ) {
+                err = nvs_set_u8(lights_config_handle, "status_led", status_led_json->valueint); 
+                if (err == ESP_OK) {
+                    ESP_LOGI(TAG, "status_led %d", status_led_json->valueint);
+                } else {
+                    ESP_LOGW(TAG, "error nvs_set_u8 status_led %d err %d", status_led_json->valueint, err);
+                }
+            }
+        } 
+        else {
+            ESP_LOGE(TAG, "error parsing status_led json");
+        }
+
+        cJSON *lights_json = cJSON_GetObjectItem(root, "lights");
+
+        if (cJSON_IsArray(lights_json)) {
+            uint8_t num_lights = cJSON_GetArraySize(lights_json);
+
+            lights_t light_config[num_lights];
+            memset(light_config, 0, num_lights * sizeof(lights_t));
+
+            cJSON *fld;
+            uint8_t i = 0;
+            cJSON_ArrayForEach(fld, lights_json) {
+                cJSON *key = cJSON_GetObjectItem(fld, "light_gpio");
+                if (cJSON_IsNumber(key) && key->valueint >= 0) { 
+                    if (key->valueint <= 16 ) {
+                        light_config[i].light_gpio = key->valueint; 
+                    }
+                }
+                key = cJSON_GetObjectItem(fld, "led_gpio");
+                if (cJSON_IsNumber(key) && key->valueint >= 0) { 
+                    if (key->valueint <= 16 ) {
+                        light_config[i].led_gpio = key->valueint; 
+                    }
+                }
+                key = cJSON_GetObjectItem(fld, "button_gpio");
+                if (cJSON_IsNumber(key) && key->valueint >= 0) { 
+                    if (key->valueint <= 16 ) {
+                        light_config[i].button_gpio = key->valueint; 
+                    }
+                }
+                light_config[i].is_dimmer = cJSON_IsTrue(cJSON_GetObjectItem(fld, "is_dimmer"));
+                i++;
+                if (i > 4) {
+                    break;          // ignore entries over 4
+                }
+            }
+
+            ESP_LOGI(TAG, 
+                "          Light  LED   Button  Dimmable? ");
+            for (i = 0; i < num_lights; i++) {
+                ESP_LOGI(TAG, 
+                "Light %d    %2d     %2d      %2d      %s", (i + 1), light_config[i].light_gpio, light_config[i].led_gpio, 
+                                                                    light_config[i].button_gpio, light_config[i].is_dimmer ? "true" : "false");
+            }
+
+            err = nvs_set_u8(lights_config_handle, "num_lights", num_lights);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "error nvs_set_u8 num_lights %d err %d", num_lights, err);
+            }
+
+            size_t size = num_lights * sizeof(lights_t);
+            err = nvs_set_blob(lights_config_handle, "config", light_config, size);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "error nvs_set_blob lights size %d err %d", size, err);
+            }
+
+            err = nvs_commit(lights_config_handle);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "error nvs_commit err %d", err);
+            }
+        }
+        else {
+            ESP_LOGE(TAG, "error parsing lights array json");
+        }
+        
+        nvs_close(lights_config_handle);
+        cJSON_Delete(root);
+    }
+    else {
+        ESP_LOGE(TAG, "nvs_open err %d ", err);
+    }
+ 
+    httpd_resp_send(req, NULL, 0);
+
+    return ESP_OK;
+}
+
+
 esp_err_t start_webserver(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
@@ -543,7 +749,25 @@ esp_err_t start_webserver(void)
         };
         httpd_register_uri_handler(server, &restart_json_page);
 
-        // CLient requesting Server Side Events
+        // Retrieve lights config from NVS. Requested when page first loads
+        httpd_uri_t getlights_json_page = {
+            .uri       = "/getlights.json",
+            .method    = HTTP_GET,
+            .handler   = getlights_json_handler,
+            .user_ctx  = NULL
+        };
+        httpd_register_uri_handler(server, &getlights_json_page);
+
+        // Saves lights config to NVS.
+        httpd_uri_t setlights_json_page = {
+            .uri       = "/setlights.json",
+            .method    = HTTP_POST,
+            .handler   = setlights_json_handler,
+            .user_ctx  = NULL
+        };
+        httpd_register_uri_handler(server, &setlights_json_page);
+
+        // Client requesting Server Side Events
         httpd_uri_t server_side_event_registration_page = {
             .uri       = "/event",
             .method    = HTTP_GET,

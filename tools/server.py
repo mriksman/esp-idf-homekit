@@ -27,6 +27,12 @@ def ap_json():
 	    data = json.load(json_file)
     return jsonify(data)
 
+@app.route("/getlights.json", methods=["GET"])
+def getlights_json():
+    with open(base_path+'\\tools\\getlights.json') as json_file:
+	    data = json.load(json_file)
+    return jsonify(data)
+
 @app.route("/connect.json", methods=["POST"])
 def connect_json():
     # Validate the request body contains JSON
@@ -45,7 +51,7 @@ def connect_json():
 def restart_json():
     if request.is_json:
         req = request.get_json()
-        if req['update'] == True:
+        if 'update' in req and req['update'] == True:
             global update
             update = "Connected.."
         print(req)

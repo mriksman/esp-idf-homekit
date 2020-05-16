@@ -183,7 +183,10 @@ int button_create(const uint8_t gpio_num,
     gpio_config_t io_conf = {0};
     io_conf.mode = GPIO_MODE_INPUT;
     io_conf.pin_bit_mask = (1ULL<<button->gpio_num);
-    gpio_config(&io_conf);
+    if (gpio_config(&io_conf) != ESP_OK) {
+        button_free(button);
+        return -5;              // issue with gpio config
+    }
 
     button->last_high = gpio_get_level(button->gpio_num) == 1;
 

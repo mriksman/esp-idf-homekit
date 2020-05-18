@@ -497,9 +497,6 @@ esp_err_t update_boot_handler(httpd_req_t *req)
 }
 
 
-
-
-
 /* GET handler for /getlights.json. Gets light config from NVS */
 esp_err_t getlights_json_handler(httpd_req_t *req)
 {
@@ -509,7 +506,7 @@ esp_err_t getlights_json_handler(httpd_req_t *req)
     err = nvs_open("lights", NVS_READWRITE, &lights_config_handle);
     if (err == ESP_OK) {
         char *out;
-        cJSON *root, *lights_json, *fld;
+        cJSON *root, *lights_json, *fld, *invert_json;
 
         root = cJSON_CreateObject();
 
@@ -548,6 +545,22 @@ esp_err_t getlights_json_handler(httpd_req_t *req)
             }
             else {
                 ESP_LOGW(TAG, "error nvs_get_u8 num_lights err %d", err);
+            }
+
+            //4; status, light_gpio, led_gpio, button_gpio
+            bool invert_config[4];
+            size = 4 * sizeof(bool);
+            err = nvs_get_blob(lights_config_handle, "invert", invert_config, &size);
+            if (err == ESP_OK) {
+                invert_json = cJSON_CreateObject();
+                cJSON_AddItemToObject(root, "invert", invert_json);
+                cJSON_AddItemToObject(invert_json, "status_gpio",cJSON_CreateBool(invert_config[0]));
+                cJSON_AddItemToObject(invert_json, "light_gpio",cJSON_CreateBool(invert_config[1]));
+                cJSON_AddItemToObject(invert_json, "led_gpio",cJSON_CreateBool(invert_config[2]));
+                cJSON_AddItemToObject(invert_json, "button_gpio",cJSON_CreateBool(invert_config[3]));
+            }
+            else {
+                ESP_LOGW(TAG, "error nvs_get_u8 invert err %d", err);
             }
 
             nvs_close(lights_config_handle);
@@ -660,13 +673,23 @@ esp_err_t setlights_json_handler(httpd_req_t *req)
                 }
             }
 
+            cJSON *invert_json = cJSON_GetObjectItem(root, "invert");
+            //4; status, light_gpio, led_gpio, button_gpio
+            bool invert[4] = {0};
+            invert[0] = cJSON_IsTrue(cJSON_GetObjectItem(invert_json, "status_gpio"));
+            invert[1] = cJSON_IsTrue(cJSON_GetObjectItem(invert_json, "light_gpio"));
+            invert[2] = cJSON_IsTrue(cJSON_GetObjectItem(invert_json, "led_gpio"));
+            invert[3] = cJSON_IsTrue(cJSON_GetObjectItem(invert_json, "button_gpio"));
+
             ESP_LOGI(TAG, 
                 "          Light  LED   Button  Dimmable? ");
             for (i = 0; i < num_lights; i++) {
                 ESP_LOGI(TAG, 
-                "Light %d    %2d     %2d      %2d      %s", (i + 1), light_config[i].light_gpio, light_config[i].led_gpio, 
-                                                                    light_config[i].button_gpio, light_config[i].is_dimmer ? "true" : "false");
+                "Light %d    %2d     %2d     %2d     %s", (i + 1), light_config[i].light_gpio, light_config[i].led_gpio, 
+                                                                   light_config[i].button_gpio, light_config[i].is_dimmer ? "true" : "false");
             }
+            ESP_LOGI(TAG, 
+                "Invert   %5s  %5s  %5s ", invert[1] ? "true" : "false", invert[2] ? "true" : "false", invert[3] ? "true" : "false");
 
             err = nvs_set_u8(lights_config_handle, "num_lights", num_lights);
             if (err != ESP_OK) {
@@ -679,13 +702,19 @@ esp_err_t setlights_json_handler(httpd_req_t *req)
                 ESP_LOGW(TAG, "error nvs_set_blob lights size %d err %d", size, err);
             }
 
-            err = nvs_commit(lights_config_handle);
+            size = 4 * sizeof(bool);
+            err = nvs_set_blob(lights_config_handle, "invert", invert, size);
             if (err != ESP_OK) {
-                ESP_LOGW(TAG, "error nvs_commit err %d", err);
+                ESP_LOGW(TAG, "error nvs_set_blob invert size %d err %d", size, err);
             }
         }
         else {
             ESP_LOGE(TAG, "error parsing lights array json");
+        }
+        
+        err = nvs_commit(lights_config_handle);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "error nvs_commit err %d", err);
         }
         
         nvs_close(lights_config_handle);
@@ -703,17 +732,18 @@ esp_err_t setlights_json_handler(httpd_req_t *req)
 
 esp_err_t start_webserver(void)
 {
+    if (server != NULL) {
+        ESP_LOGE(TAG, "HTTPD already running");
+        return ESP_FAIL;
+    }
+
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_open_sockets = 5;
     // kick off any old socket connections to allow new connections
     config.lru_purge_enable = true;
 
-    // Start the httpd server
-    ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
     if (httpd_start(&server, &config) == ESP_OK) {
-        // Set URI handlers
-        ESP_LOGI(TAG, "Registering URI handlers");
-
+        ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
         httpd_uri_t root_page = {
             .uri       = "/",
             .method    = HTTP_GET,
@@ -824,6 +854,7 @@ void stop_webserver(void)
 
     // Stop the httpd server
     httpd_stop(server);
+    server = NULL;
 }
 
 

@@ -72,7 +72,7 @@ h3 {
 }	
 .slider {
 	overflow-y: hidden;
-	max-height: 1200px;             
+	max-height: 1400px;             
 	transition: max-height var(--slider-transistion-time) ease-in-out, border-bottom-width 0s;
 }
 .slider.closed {
@@ -85,16 +85,16 @@ h3 {
 .flex_content {
 	display: flex;
 	flex-wrap: wrap;
-	justify-content: space-around;		/* push elements to outside on each row */
-	align-items: center;  				/* vertical alignment for all children */
+	justify-content: space-around;					/* push elements to outside on each row */
+	align-items: center;  							/* vertical alignment for all children */
 	padding: 12px;
 }
-.flex_content .break { 					/* use to break flex rows */
+.flex_content .break { 								/* use to break flex rows */
 	flex-basis: 100%;
 	height: 12px;
 }
 .flex_text {
-	flex-grow: 1;						/* text element to consume all available space */
+	flex-grow: 1;									/* text element to consume all available space */
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -114,13 +114,13 @@ h3 {
 	width: 20px;
 }
 .buttons {
-	flex-grow: 1;						/* as a flex item, fill the whole row */
+	flex-grow: 1;									/* as a flex item, fill the whole row */
 
-	display: flex;						/* also a flex parent */
-	justify-content: space-around;		/* push buttons to outside edges */
+	display: flex;									/* also a flex parent */
+	justify-content: space-around;					/* push buttons to outside edges */
 }
 .buttons>*:only-child {
-	margin: 0 auto;						/* unless there is only one. then center */
+	margin: 0 auto;									/* unless there is only one. then center */
 }
 .text_input {
 	flex-grow: 1;
@@ -136,8 +136,8 @@ h3 {
 	
 	display: flex;
 	flex-wrap: wrap;
-	justify-content: space-around;		/* push elements to outside on each row */
-	align-items: center;  				/* vertical alignment for all children */
+	justify-content: space-around;
+	align-items: center; 
 }
 .flex_form_label {
 	flex-grow: 1;
@@ -170,7 +170,7 @@ ul {
 }
 
 input[type="button"] {
-	flex: 0 0 100px;					/* width 100px. don't flex grow */
+	flex: 0 0 100px;								/* width 100px. don't flex grow */
 
 	padding: 5px;
 	text-align: center;
@@ -220,12 +220,12 @@ p {
 	background-color: black;
 }
 #log_output {
-	font: 0.6em courier;
+	font: 0.6em consolas;
 	color: LightGray;
 	overflow: auto; 
 	height:100px; 
 	width: 100%;
-	white-space: nowrap;
+	white-space: pre;
 }
 #log_output::-webkit-scrollbar {
 	display: none;
@@ -235,7 +235,7 @@ p {
 /****** Modal dialog box ******/
 .modal {
 	display: flex;
-	flex-direction: column;				/* section_header and section_body - used to grow section_body to fill modal space */
+	flex-direction: column;							/* section_header and section_body - used to grow section_body to fill modal space */
 	
 	width: 350px;
 	max-width: 100%;
@@ -254,7 +254,7 @@ p {
 	box-shadow: 0 0 60px 10px rgba(0, 0, 0, 0.9);
 }
 .modal .buttons  {
-	margin-top:auto;					/* push buttons to bottom */
+	margin-top:auto;								/* push buttons to bottom */
 }
 
 .modal_closed {
@@ -412,11 +412,24 @@ p {
 				<div class="section_body slider" >
 					<div class="flex_content">
 
-						<label for="status_led" class="flex_form_label center">Status LED</label>
+						<label for="status_led" class="flex_form_label">Status LED</label>
 						<div class="flex_form_input center">
 							<input id="status_led" type="number" step="1" min="0" max="16" name="status_led" value="0">
 						</div>
+						<div class="flex_form_input center">Invert?</div>
+						<div class="flex_form_input" >
+							<div style="padding-left:22px">
+								<label class="checkbox path" >
+									<input type="checkbox" name="invert_status">
+									<svg viewBox="0 0 21 21">
+										<path d="M5,10.75 L8.5,14.25 L19.4,2.3 C18.8333333,1.43333333 18.0333333,1 17,1 L4,1 C2.35,1 1,2.35 1,4 L1,17 C1,18.65 2.35,20 4,20 L17,20 C18.65,20 20,18.65 20,17 L20,7.99769186"></path>
+									</svg>
+								</label>
+							</div>
+						</div>
+						<div class="flex_form_input center"></div>
 						<div class="break"></div>
+						
 						<label for="num_lights" class="flex_form_label center">Number of Lights</label>
 						<div class="flex_form_input center">
 							<input id="num_lights" type="number" step="1" min="1" max="4" name="num_lights" value="1">
@@ -461,14 +474,49 @@ p {
 								</div>
 								<div class="break"></div>
 							</div>
-							
 						</template>
-																			
 
-						
+						<template id="invert_row">
+							<div class="flex_form_row">
+								<div class="flex_form_label">Invert?</div>
+								<div class="flex_form_input" >
+									<div style="padding-left:22px">
+										<label class="checkbox path" >
+											<input type="checkbox" name="invert_light">
+											<svg viewBox="0 0 21 21">
+												<path d="M5,10.75 L8.5,14.25 L19.4,2.3 C18.8333333,1.43333333 18.0333333,1 17,1 L4,1 C2.35,1 1,2.35 1,4 L1,17 C1,18.65 2.35,20 4,20 L17,20 C18.65,20 20,18.65 20,17 L20,7.99769186"></path>
+											</svg>
+										</label>
+									</div>
+								</div>
+								<div class="flex_form_input" >
+									<div style="padding-left:22px">
+										<label class="checkbox path" >
+											<input type="checkbox" name="invert_led">
+											<svg viewBox="0 0 21 21">
+												<path d="M5,10.75 L8.5,14.25 L19.4,2.3 C18.8333333,1.43333333 18.0333333,1 17,1 L4,1 C2.35,1 1,2.35 1,4 L1,17 C1,18.65 2.35,20 4,20 L17,20 C18.65,20 20,18.65 20,17 L20,7.99769186"></path>
+											</svg>
+										</label>
+									</div>
+								</div>
+								<div class="flex_form_input" >
+									<div style="padding-left:22px">
+										<label class="checkbox path" >
+											<input type="checkbox" name="invert_button">
+											<svg viewBox="0 0 21 21">
+												<path d="M5,10.75 L8.5,14.25 L19.4,2.3 C18.8333333,1.43333333 18.0333333,1 17,1 L4,1 C2.35,1 1,2.35 1,4 L1,17 C1,18.65 2.35,20 4,20 L17,20 C18.65,20 20,18.65 20,17 L20,7.99769186"></path>
+											</svg>
+										</label>
+									</div>
+								</div>
+								<div class="flex_form_input center" >
+								</div>
+							</div>
+						</template>																			
+			
 						<div class="break"></div>
 						<div class="buttons">
-							<input class="light_config" type="button" value="Update"/>
+							<input class="light_config" type="button" value="Configure"/>
 						</div>
 					</div>
 
@@ -661,14 +709,15 @@ document.querySelector('#num_lights').addEventListener('change', (e) => {
 function updateLightsForm() {
 	var num_lights = parseInt(document.querySelector("#num_lights").value);
 
+	var form_body = document.querySelector('#settings .section_body .flex_content .flex_form_row');
 	// remove exisiting items
-	document.querySelector('#settings .section_body .flex_content .flex_form_row').innerHTML = "";
+	form_body.innerHTML = "";
 	
 	// add header
 	if (num_lights > 0) {
 		var temp = document.querySelector("#header_row");
 		var clon = temp.content.cloneNode(true);
-		document.querySelector('#settings .section_body .flex_content .flex_form_row').appendChild(clon);
+		form_body.appendChild(clon);
 	}
 	// and re-add them from saved config data		
 	for(i = 0; i < num_lights; i++)  {
@@ -682,33 +731,57 @@ function updateLightsForm() {
 			clon.querySelector('[name="button_gpio"]').value = config_esp_json.lights[i].button_gpio;
 			clon.querySelector('[name="is_dimmer"]').checked = config_esp_json.lights[i].is_dimmer;
 		}
-		document.querySelector('#settings .section_body .flex_content .flex_form_row').appendChild(clon);
+		form_body.appendChild(clon);
+	}
+	// add invert row
+	if (num_lights > 0) {
+		var temp = document.querySelector("#invert_row");
+		var clon = temp.content.cloneNode(true);
+		if (config_esp_json.hasOwnProperty("invert")) {
+			clon.querySelector('[name="invert_light"]').checked = config_esp_json.invert.light_gpio;
+			clon.querySelector('[name="invert_led"]').checked = config_esp_json.invert.led_gpio;
+			clon.querySelector('[name="invert_button"]').checked = config_esp_json.invert.button_gpio;
+		}
+		form_body.appendChild(clon);
 	}
 
 	if (config_esp_json.hasOwnProperty("status_led")) {
 		document.querySelector('#status_led').value = config_esp_json.status_led;
 	}
+	if (config_esp_json.hasOwnProperty("invert")) {
+		document.querySelector('[name="invert_status"]').checked = config_esp_json.invert.status_gpio;
+	}
 }
 
 /** Saves current form data to global. Does not remove entries if num_lights is reduced **/
 function updateLightsConfiguration() {
+	config_esp_json.status_led = parseInt(document.querySelector('#status_led').value);
+
+	if (!config_esp_json.hasOwnProperty("invert")) {
+		config_esp_json.invert = {};
+	}
+	config_esp_json.invert.status_gpio = document.querySelector('[name="invert_status"]').checked;
+
 	var lights = {};
 	var light_row = document.querySelectorAll('[name="lights"]');
-
 	for(var i = 0; i < light_row.length; i++)  {	
 		var light_object = {};
 
-		light_object["light_gpio"] = parseInt(light_row[i].querySelector('[name="light_gpio"]').value);
-		light_object["led_gpio"] = parseInt(light_row[i].querySelector('[name="led_gpio"]').value);
-		light_object["button_gpio"] = parseInt(light_row[i].querySelector('[name="button_gpio"]').value);
-		light_object["is_dimmer"] = light_row[i].querySelector('[name="is_dimmer"]').checked;
+		light_object.light_gpio = parseInt(light_row[i].querySelector('[name="light_gpio"]').value);
+		light_object.led_gpio = parseInt(light_row[i].querySelector('[name="led_gpio"]').value);
+		light_object.button_gpio = parseInt(light_row[i].querySelector('[name="button_gpio"]').value);
+		light_object.is_dimmer = light_row[i].querySelector('[name="is_dimmer"]').checked;
 		
 		if (!config_esp_json.hasOwnProperty("lights")) {
-			config_esp_json["lights"] = []; // create an array of objects
+			config_esp_json.lights = []; // create an array of objects
 		}
 		config_esp_json.lights[i] = light_object;
 	}
-	config_esp_json["status_led"] = parseInt(document.querySelector('#status_led').value);
+	if (light_row.length > 0) {
+		config_esp_json.invert.light_gpio = document.querySelector('[name="invert_light"]').checked;
+		config_esp_json.invert.led_gpio = document.querySelector('[name="invert_led"]').checked;
+		config_esp_json.invert.button_gpio = document.querySelector('[name="invert_button"]').checked;
+	}
 };
 
 /** Update button - send data to ESP to update configuration **/

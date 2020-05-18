@@ -13,5 +13,11 @@
 		 "button_gpio":14,
 		 "is_dimmer":false
 		}
-	]
+	],
+	"invert": {
+		 "status_gpio":true,
+		 "light_gpio":true,
+		 "led_gpio":true,
+		 "button_gpio":true
+		}
 }

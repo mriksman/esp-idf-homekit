@@ -48,15 +48,14 @@ static led_status_pattern_t not_paired = LED_STATUS_PATTERN({100, -100});
 static led_status_pattern_t normal_mode = LED_STATUS_PATTERN({5, -9995});
 static led_status_pattern_t identify = LED_STATUS_PATTERN({100, -100, 100, -350, 100, -100, 100, -350, 100, -100, 100, -350});
 
-// *** Included to show app_desc_t from partition ***
-#include "esp_app_format.h"
-#include "esp_ota_ops.h"
-#include "esp_image_format.h"
-// **************************************************
-
 typedef struct {
-    lights_t config;
+    // from NVS
+    lights_t config;            // lights.h shared with httpd
+
     // private
+    bool light_gpio_inverted;
+    bool led_gpio_inverted;
+
     uint8_t idx;
     TimerHandle_t dim_timer;
     int8_t dim_direction;
@@ -96,9 +95,8 @@ void lightbulb_on_callback(homekit_characteristic_t *_ch, homekit_value_t value,
         }
     }
     else {
-        gpio_set_level(lights[light_idx].config.light_gpio, !value.bool_value);    // light GPIO is inverted
+        gpio_set_level(lights[light_idx].config.light_gpio, lights->light_gpio_inverted ? !value.bool_value : value.bool_value); 
     }
-
 }
 
 void lightbulb_brightness_callback(homekit_characteristic_t *_ch, homekit_value_t value, void *context) {
@@ -197,10 +195,10 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
         uint8_t light_idx = *((uint8_t*) event_data);
 
         if (event_id == BUTTON_EVENT_UP) {
-            gpio_set_level(lights[light_idx].config.led_gpio, 1);
+            gpio_set_level(lights[light_idx].config.led_gpio, lights->led_gpio_inverted ? 1 : 0);
         }
         else if (event_id == BUTTON_EVENT_DOWN) {
-            gpio_set_level(lights[light_idx].config.led_gpio, 0);
+            gpio_set_level(lights[light_idx].config.led_gpio, lights->led_gpio_inverted ? 0 : 1);
         }
 
         else if (event_id == BUTTON_EVENT_DOWN_HOLD) {
@@ -216,7 +214,6 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
         }
 
         else if (event_id == BUTTON_EVENT_LONG_PRESS) {
-            // STATELESS_PROGRAMMABLE_SWITCH supports single, double and long press events
             ESP_LOGI(TAG, "button %d long press event. start AP", light_idx);  
             //start_ap_prov();        
             xTaskCreate(&start_ap_task, "Start AP", 1536, NULL, tskIDLE_PRIORITY, NULL);
@@ -257,16 +254,7 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
                 char buffer[400];
                 vTaskList(buffer);
                 ESP_LOGI(TAG, "\n%s", buffer);
-
-                ESP_LOGW(TAG, "INTENABLE %x", xthal_get_intenable() );
             } 
-
-            else if (event_id > 6 && event_id < 8) {
-                esp_wifi_stop();
-            } 
-            else if (event_id > 10) {
-                esp_wifi_start();
-            }
         }
     }
 }
@@ -342,11 +330,7 @@ void init_accessory(uint8_t num_lights) {
 
 esp_err_t configure_peripherals(uint8_t num_lights) {
     esp_err_t err;
-    lights = (light_service_t*)calloc(num_lights, sizeof(light_service_t));
-    if (lights == NULL) {
-        ESP_LOGE(TAG, "couldn't allocate mem for light_service_t");
-        return ESP_FAIL; 
-    }
+    size_t size;
 
     nvs_handle lights_config_handle;
     err = nvs_open("lights", NVS_READWRITE, &lights_config_handle);
@@ -355,47 +339,60 @@ esp_err_t configure_peripherals(uint8_t num_lights) {
         return err;
     }
 
+    bool invert[4];
+    size = 4;       //4; status_gpio, light_gpio, led_gpio, button_gpio
+    err = nvs_get_blob(lights_config_handle, "invert", invert, &size);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_get_blob invert err %d ", err);
+        return err;
+    }
+
+    // Status LED
+    uint8_t status_led_gpio = 0;
+    err = nvs_get_u8(lights_config_handle, "status_led", &status_led_gpio); 
+    if (err == ESP_OK) {
+        led_status = led_status_init(status_led_gpio, invert[0] ? false : true);
+    }
+    else {
+        ESP_LOGW(TAG, "error nvs_get_u8 status_led err %d", err);
+    }
+
+    // don't continue configuration unless there are lights to configure.
+    if (num_lights == 0) {
+        return ESP_FAIL;
+    }
+
+    lights = (light_service_t*)calloc(num_lights, sizeof(light_service_t));
+    if (lights == NULL) {
+        ESP_LOGE(TAG, "couldn't allocate mem for light_service_t");
+        return ESP_FAIL; 
+    }
+
     lights_t light_config[num_lights];
-    size_t size = num_lights * sizeof(lights_t);
+    size = num_lights * sizeof(lights_t);
     err = nvs_get_blob(lights_config_handle, "config", light_config, &size);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "nvs_get_blob config err %d ", err);
         return err;
     }
 
-    ESP_LOGI(TAG, 
-        "          Light  LED   Button  Dimmable? ");
-    for (uint8_t i = 0; i < num_lights; i++) {
-        ESP_LOGI(TAG, 
-        "Light %d    %2d     %2d      %2d      %s", (i + 1), light_config[i].light_gpio, light_config[i].led_gpio, 
-                                                             light_config[i].button_gpio, light_config[i].is_dimmer ? "true" : "false");
-    }
-
     for (uint8_t i = 0; i < num_lights; i++) {
         lights[i].config.light_gpio = light_config[i].light_gpio; 
-        lights[i].config.led_gpio  = light_config[i].led_gpio;
-        lights[i].config.button_gpio  = light_config[i].button_gpio;
+        lights[i].config.led_gpio = light_config[i].led_gpio;
+        lights[i].config.button_gpio = light_config[i].button_gpio;
         lights[i].config.is_dimmer = light_config[i].is_dimmer; 
     }
 
-/*
-    lights[0].config.light_gpio = GPIO_NUM_13;      //D7
-    lights[0].config.led_gpio = GPIO_NUM_12;        //D6
-    lights[0].config.button_gpio = GPIO_NUM_16;     //D0
-    lights[0].config.is_dimmer = false;
-
-    lights[1].config.light_gpio = GPIO_NUM_4;       //D2
-    lights[1].config.led_gpio = GPIO_NUM_14;        //D5
-    lights[1].config.button_gpio = GPIO_NUM_5;      //D1 (will need to be GPIO 3 (RX) in final code)
-    lights[1].config.is_dimmer = true;
-*/
+    // used throughout main program
+    lights->light_gpio_inverted = invert[1];
+    lights->led_gpio_inverted = invert[2];
 
     // 1. button configuration
-    button_config_t button_config = BUTTON_CONFIG(
-        BUTTON_ACTIVE_LOW,
+    button_config_t button_config = {
+        .active_level = invert[3] ? BUTTON_ACTIVE_LOW : BUTTON_ACTIVE_HIGH,
         .repeat_press_timeout = 300,
         .long_press_time = 10000,
-    );
+    };
 
     // 2. status/feedback LEDs on each button 
     //     OR 
@@ -412,11 +409,7 @@ esp_err_t configure_peripherals(uint8_t num_lights) {
             num_dimming_lights++;
         }   
     }
-/*
-    uint32_t *pins = (uint32_t*)calloc(num_dimming_lights, sizeof(uint32_t));
-    uint32_t *duties = (uint32_t*)calloc(num_dimming_lights, sizeof(uint32_t));
-    int16_t *phases = (int16_t*)calloc(num_dimming_lights, sizeof(int16_t));
-*/
+
     uint32_t pins[num_dimming_lights];
     uint32_t duties[num_dimming_lights];
     int16_t phases[num_dimming_lights];
@@ -439,7 +432,7 @@ esp_err_t configure_peripherals(uint8_t num_lights) {
             pins[i_pwm] = lights[i].config.light_gpio;
             duties[i_pwm] = 0;
             phases[i_pwm] = 0;
-            pwm_invert_mask |= (1<<i_pwm);
+            pwm_invert_mask |= (lights->light_gpio_inverted << i_pwm);
 
             // create timer for long button hold - dimming function
             int dim_name_len = snprintf(NULL, 0, "dim%d", i + 1);
@@ -471,9 +464,9 @@ esp_err_t configure_peripherals(uint8_t num_lights) {
 
     // turn off all status feedback LEDs (1 = off) and Lights that aren't PWM (1 = off)
     for (uint8_t i = 0; i < num_lights; i++) {
-        gpio_set_level(lights[i].config.led_gpio, 1);
+        gpio_set_level(lights[i].config.led_gpio, lights->led_gpio_inverted ? 1 : 0);
         if (!lights[i].config.is_dimmer) {
-            gpio_set_level(lights[i].config.light_gpio, 1);
+            gpio_set_level(lights[i].config.light_gpio, lights->light_gpio_inverted ? 1 : 0);
         }
     }
 
@@ -484,11 +477,7 @@ esp_err_t configure_peripherals(uint8_t num_lights) {
         pwm_set_phases(phases);                         // throws an error if not set (even if it's 0)
         pwm_start();
     }
-/*
-    free(pins);
-    free(duties);
-    free(phases);
-*/
+
     nvs_close(lights_config_handle);
     return ESP_OK;
 }
@@ -543,16 +532,6 @@ void app_main(void)
     nvs_handle lights_config_handle;
     err = nvs_open("lights", NVS_READWRITE, &lights_config_handle);
     if (err == ESP_OK) {
-        // Status LED
-        uint8_t status_led_gpio = 0;
-        err = nvs_get_u8(lights_config_handle, "status_led", &status_led_gpio); 
-        if (err == ESP_OK) {
-            led_status = led_status_init(status_led_gpio, false);
-        }
-        else {
-            ESP_LOGW(TAG, "error nvs_get_u8 status_led err %d", err);
-        }
-
         // Get configured number of lights
         uint8_t num_lights = 0;
         err = nvs_get_u8(lights_config_handle, "num_lights", &num_lights);
@@ -560,33 +539,16 @@ void app_main(void)
             ESP_LOGW(TAG, "error nvs_get_u8 num_lights err %d", err);
         }
         nvs_close(lights_config_handle);
-        if (num_lights > 0) {
-            if (configure_peripherals(num_lights) == ESP_OK) {
-                init_accessory(num_lights);
-                homekit_server_init(&config);
-                paired = homekit_is_paired();
-            }
+
+        // if num_lights == 0, it will configure status LED and then return an error
+        if (configure_peripherals(num_lights) == ESP_OK) {
+            init_accessory(num_lights);
+            homekit_server_init(&config);
+            paired = homekit_is_paired();
         }
     }
     else {
         ESP_LOGE(TAG, "nvs_open err %d ", err);
     }
 
-
-/*
-    const esp_partition_t *next = esp_ota_get_running_partition();
-    esp_app_desc_t app_desc;
-    esp_ota_get_partition_description(next, &app_desc);
-    const esp_app_desc_t *app_desc1;
-    app_desc1 = esp_ota_get_app_description();
-
-    ESP_LOGI(TAG, "\r\n\
-                                Magic word   App version    Proj Name     Time  \r\n\
-ota_get_partition_description   0x%8x  %s   %s   %s\r\n\
-ota_get_app_description         0x%8x  %s   %s   %s",
-             app_desc.magic_word, app_desc.version, app_desc.project_name, app_desc.time,
-             app_desc1->magic_word, app_desc1->version, app_desc1->project_name, app_desc1->time
-            );
-
-*/
 }

@@ -69,7 +69,7 @@ def stream():
                 counter += 1
                 if counter == 100:
                     counter=0
-                yield "data: this is a really long debug string that will be longer than the width of the log display\n\n"
+                yield "data: this is a    really long     debug string that will be longer than the width of the log display\n\n"
                 with open(base_path+'\\tools\\status.json') as json_file:
 	                data = json.loads(json_file.read())	
                 yield "event: status\ndata:" + json.dumps(data) + "\n\n"

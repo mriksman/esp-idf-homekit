@@ -220,7 +220,7 @@ p {
 	background-color: black;
 }
 #log_output {
-	font: 0.6em consolas;
+	font: 0.6em courier;
 	color: LightGray;
 	overflow: auto; 
 	height:100px; 
@@ -279,6 +279,7 @@ p {
 
 
 /****** Animated Checkbox ******/
+
 .checkbox {
 	--background: #fff;
 	--border: #D1D6EE;
@@ -345,6 +346,7 @@ p {
 	-webkit-transition: stroke-dasharray .6s, stroke-dashoffset .6s;
 	transition: stroke-dasharray .6s, stroke-dashoffset .6s;
 }
+
 
 /****** SpinKit is licensed under the MIT License. Copyright (c) 2015 Tobias Ahlin ******/
 .spinner {
@@ -416,15 +418,11 @@ p {
 						<div class="flex_form_input center">
 							<input id="status_led" type="number" step="1" min="0" max="16" name="status_led" value="0">
 						</div>
-						<div class="flex_form_input center">Invert?</div>
-						<div class="flex_form_input" >
-							<div style="padding-left:22px">
-								<label class="checkbox path" >
-									<input type="checkbox" name="invert_status">
-									<svg viewBox="0 0 21 21">
-										<path d="M5,10.75 L8.5,14.25 L19.4,2.3 C18.8333333,1.43333333 18.0333333,1 17,1 L4,1 C2.35,1 1,2.35 1,4 L1,17 C1,18.65 2.35,20 4,20 L17,20 C18.65,20 20,18.65 20,17 L20,7.99769186"></path>
-									</svg>
-								</label>
+						<label for="invert_status" class="flex_form_input center">Invert?</label>
+						<div class="flex_form_input" style="padding-left:22px" >
+							<div class="checkbox path" >
+								<input type="checkbox" id="invert_status">
+								<svg><use xlink:href="#check"></use></svg>
 							</div>
 						</div>
 						<div class="flex_form_input center"></div>
@@ -462,14 +460,10 @@ p {
 								<div class="flex_form_input center">
 									<input type="number" name="button_gpio" step="1" min="0" max="16" value="0" required>
 								</div>
-								<div class="flex_form_input" >
-									<div style="padding-left:22px">
-										<label class="checkbox path" >
-											<input type="checkbox" name="is_dimmer">
-											<svg viewBox="0 0 21 21">
-												<path d="M5,10.75 L8.5,14.25 L19.4,2.3 C18.8333333,1.43333333 18.0333333,1 17,1 L4,1 C2.35,1 1,2.35 1,4 L1,17 C1,18.65 2.35,20 4,20 L17,20 C18.65,20 20,18.65 20,17 L20,7.99769186"></path>
-											</svg>
-										</label>
+								<div class="flex_form_input" style="padding-left:22px" >
+									<div class="checkbox path" >
+										<input type="checkbox" name="is_dimmer">
+										<svg><use xlink:href="#check"></use></svg>
 									</div>
 								</div>
 								<div class="break"></div>
@@ -479,38 +473,25 @@ p {
 						<template id="invert_row">
 							<div class="flex_form_row">
 								<div class="flex_form_label">Invert?</div>
-								<div class="flex_form_input" >
-									<div style="padding-left:22px">
-										<label class="checkbox path" >
-											<input type="checkbox" name="invert_light">
-											<svg viewBox="0 0 21 21">
-												<path d="M5,10.75 L8.5,14.25 L19.4,2.3 C18.8333333,1.43333333 18.0333333,1 17,1 L4,1 C2.35,1 1,2.35 1,4 L1,17 C1,18.65 2.35,20 4,20 L17,20 C18.65,20 20,18.65 20,17 L20,7.99769186"></path>
-											</svg>
-										</label>
+								<div class="flex_form_input" style="padding-left:22px" >
+									<div class="checkbox path" >
+										<input type="checkbox" name="invert_light">
+										<svg><use xlink:href="#check"></use></svg>
 									</div>
 								</div>
-								<div class="flex_form_input" >
-									<div style="padding-left:22px">
-										<label class="checkbox path" >
-											<input type="checkbox" name="invert_led">
-											<svg viewBox="0 0 21 21">
-												<path d="M5,10.75 L8.5,14.25 L19.4,2.3 C18.8333333,1.43333333 18.0333333,1 17,1 L4,1 C2.35,1 1,2.35 1,4 L1,17 C1,18.65 2.35,20 4,20 L17,20 C18.65,20 20,18.65 20,17 L20,7.99769186"></path>
-											</svg>
-										</label>
+								<div class="flex_form_input" style="padding-left:22px" >
+									<div class="checkbox path" >
+										<input type="checkbox" name="invert_led">
+										<svg><use xlink:href="#check"></use></svg>
 									</div>
 								</div>
-								<div class="flex_form_input" >
-									<div style="padding-left:22px">
-										<label class="checkbox path" >
-											<input type="checkbox" name="invert_button">
-											<svg viewBox="0 0 21 21">
-												<path d="M5,10.75 L8.5,14.25 L19.4,2.3 C18.8333333,1.43333333 18.0333333,1 17,1 L4,1 C2.35,1 1,2.35 1,4 L1,17 C1,18.65 2.35,20 4,20 L17,20 C18.65,20 20,18.65 20,17 L20,7.99769186"></path>
-											</svg>
-										</label>
+								<div class="flex_form_input" style="padding-left:22px" >
+									<div class="checkbox path" >
+										<input type="checkbox" name="invert_button">
+										<svg><use xlink:href="#check"></use></svg>
 									</div>
 								</div>
-								<div class="flex_form_input center" >
-								</div>
+								<div class="flex_form_input center"></div>
 							</div>
 						</template>																			
 			
@@ -536,25 +517,16 @@ p {
 					<div style="border-bottom: 1px solid #888"></div>
 					
 					<div class="flex_content">
-						<div class="flex_content">	
-							<label class="checkbox path">
+						<label for="reset-nvs" >Reset NVS (Wi-Fi)</label>
+							<div class="checkbox path" >
 								<input type="checkbox" id="reset-nvs">
-								<svg viewBox="0 0 21 21">
-									<path d="M5,10.75 L8.5,14.25 L19.4,2.3 C18.8333333,1.43333333 18.0333333,1 17,1 L4,1 C2.35,1 1,2.35 1,4 L1,17 C1,18.65 2.35,20 4,20 L17,20 C18.65,20 20,18.65 20,17 L20,7.99769186"></path>
-								</svg>
-							</label>
-							<div style="padding-left: 5px;" >Reset NVS (Wi-Fi)</div>
-						</div>
-						<div class="flex_content">
-							<label class="checkbox path">
+								<svg><use xlink:href="#check"></use></svg>
+							</div>
+						<label for="reset-homekit" >Reset HomeKit</label>
+							<div class="checkbox path" >
 								<input type="checkbox" id="reset-homekit">
-								<svg viewBox="0 0 21 21">
-									<path d="M5,10.75 L8.5,14.25 L19.4,2.3 C18.8333333,1.43333333 18.0333333,1 17,1 L4,1 C2.35,1 1,2.35 1,4 L1,17 C1,18.65 2.35,20 4,20 L17,20 C18.65,20 20,18.65 20,17 L20,7.99769186"></path>
-								</svg>
-							</label>
-							<div style="padding-left: 5px;" >Reset HomeKit</div>
-						</div>
-
+								<svg><use xlink:href="#check"></use></svg>
+							</div>
 						<div class="break"></div>
 						<div class="buttons" >
 							<input id="restart" type="button" value="Restart"/>
@@ -651,6 +623,12 @@ p {
 			<div class="buttons"></div>
 		</div>
 	</div>
+	
+	<svg>
+		<symbol id="check" viewBox="0 0 21 21">
+			<path d="M5,10.75 L8.5,14.25 L19.4,2.3 C18.8333333,1.43333333 18.0333333,1 17,1 L4,1 C2.35,1 1,2.35 1,4 L1,17 C1,18.65 2.35,20 4,20 L17,20 C18.65,20 20,18.65 20,17 L20,7.99769186"></path>
+		</symbol>
+	</svg>
 
 
 <script type="text/javascript">
@@ -749,7 +727,7 @@ function updateLightsForm() {
 		document.querySelector('#status_led').value = config_esp_json.status_led;
 	}
 	if (config_esp_json.hasOwnProperty("invert")) {
-		document.querySelector('[name="invert_status"]').checked = config_esp_json.invert.status_gpio;
+		document.querySelector("#invert_status").checked = config_esp_json.invert.status_gpio;
 	}
 }
 
@@ -760,7 +738,7 @@ function updateLightsConfiguration() {
 	if (!config_esp_json.hasOwnProperty("invert")) {
 		config_esp_json.invert = {};
 	}
-	config_esp_json.invert.status_gpio = document.querySelector('[name="invert_status"]').checked;
+	config_esp_json.invert.status_gpio = document.querySelector("#invert_status").checked;
 
 	var lights = {};
 	var light_row = document.querySelectorAll('[name="lights"]');

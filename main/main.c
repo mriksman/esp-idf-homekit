@@ -3,6 +3,7 @@
 #include "freertos/event_groups.h"              // For EventGroupHandle_t
 #include "driver/gpio.h"
 #include <sys/param.h>                          // MIN MAX
+#include <math.h>
 
 #include "esp_event.h"
 
@@ -83,8 +84,8 @@ void lightbulb_on_callback(homekit_characteristic_t *_ch, homekit_value_t value,
         homekit_characteristic_t *brightness_c = homekit_service_characteristic_by_type(
                     _ch->service, HOMEKIT_CHARACTERISTIC_BRIGHTNESS 
                 );
-
-        pwm_set_duty(lights[light_idx].pwm_channel, value.bool_value ? brightness_c->value.int_value * PWM_PERIOD_IN_US/100 : 0);
+        double gamma = pow(((brightness_c->value.int_value+25.0)/125.0),2.2)*100.0;
+        pwm_set_duty(lights[light_idx].pwm_channel, value.bool_value ? (uint32_t)(gamma * PWM_PERIOD_IN_US/100) : 0);
         pwm_start();
 
         // if the light is turned off, set the direction up for the next time the light turns on
@@ -106,7 +107,8 @@ void lightbulb_brightness_callback(homekit_characteristic_t *_ch, homekit_value_
     }
     uint8_t light_idx = *((uint8_t*) context);
 
-    pwm_set_duty(lights[light_idx].pwm_channel, value.int_value * PWM_PERIOD_IN_US/100);
+    double gamma = pow(((value.int_value+25.0)/125.0),2.2)*100.0;
+    pwm_set_duty(lights[light_idx].pwm_channel, (uint32_t)(gamma * PWM_PERIOD_IN_US/100));
     pwm_start();
 
 }

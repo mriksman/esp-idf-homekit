@@ -23,9 +23,6 @@ static int s_retry_num = 0;
 static TimerHandle_t g_retry_connect_timer = NULL;
 static TimerHandle_t g_stop_delay_timer = NULL;
 static SemaphoreHandle_t g_wifi_mutex = NULL;
-//static TaskHandle_t retry_connect_task_handle = NULL;
-
-
 
 void start_ap_prov();
 void stop_ap_prov();
@@ -47,21 +44,6 @@ static void stop_delay_callback(TimerHandle_t timer) {
     stop_ap_prov();
 }
 
-/*
-static void retry_connect_task(void * arg)
-{
-    for(;;) {
-        ESP_LOGI(TAG, "Retry connection task");
-        if( xSemaphoreTake(g_wifi_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            esp_wifi_connect();
-        } else {
-            ESP_LOGI(TAG, "Wi-Fi scan in progress");
-        }
-        vTaskDelay(pdMS_TO_TICKS(10000));
-    }
-}
-*/
-
 /* Event handler for Wi-Fi Events */
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data) {
@@ -78,8 +60,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
             #ifdef CONFIG_IDF_TARGET_ESP32
                 esp_netif_ip_info_t ip_info;
                 esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-                esp_netif_get_ip_info(esp_netif, &ip_info)
-                bool if_status = esp_netif_is_netif_up(esp_netif);
+                esp_netif_get_ip_info(netif, &ip_info);
+                bool if_status = esp_netif_is_netif_up(netif);
             #elif CONFIG_IDF_TARGET_ESP8266
                 tcpip_adapter_ip_info_t ip_info;
                 ESP_ERROR_CHECK(tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info));
@@ -122,11 +104,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                     esp_wifi_start();       // to router (no AP found), and soft AP is not visible
                 }
                 // Keep trying to connect to existing AP at a slower rate
-                /*
-                if (retry_connect_task_handle == NULL) {
-                    xTaskCreate(&retry_connect_task, "retry_connect", 1024, NULL, tskIDLE_PRIORITY, &retry_connect_task_handle);
-                }
-                */
                 xTimerStart(g_retry_connect_timer, 0);
             }
         }
@@ -139,12 +116,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
             xSemaphoreGive(g_wifi_mutex);
 
             // Stop periodic connection retry attempts
-/*
-            if (retry_connect_task_handle != NULL) {
-                vTaskDelete(retry_connect_task_handle);
-                retry_connect_task_handle = NULL;
-            }
-*/
             xTimerStop(g_retry_connect_timer, 0);
 
             wifi_mode_t wifi_mode;
@@ -159,7 +130,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         }
     } 
 }
-
 
 void start_ap_prov() {
     wifi_config_t wifi_cfg;
@@ -197,9 +167,8 @@ void stop_ap_prov() {
     ESP_LOGI(TAG, "Stopped softAP and HTTPD Service");
 }
 
-void wifi_init()
-{
-    g_wifi_mutex = xSemaphoreCreateMutex();
+void wifi_init() {
+    vSemaphoreCreateBinary(g_wifi_mutex);
 
     // Mandatory Wi-Fi initialisation code
     #ifdef CONFIG_IDF_TARGET_ESP32
@@ -227,24 +196,6 @@ void wifi_init()
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-/*
-    // Check to see if it has previosuly been provisioned.
-    bool provisioned = false;
-
-    wifi_config_t wifi_cfg;
-    if ( esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_cfg) == ESP_OK  && 
-         strlen((const char*) wifi_cfg.sta.ssid) ) {
-        ESP_LOGI(TAG, "Found ssid %s",     (const char*) wifi_cfg.sta.ssid);
-        provisioned = true;
-    }
-
-    if (!provisioned) {
-        start_ap_prov();               
-    } else  {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
-    }
-*/
 
     // Always start softAP. If it connects to an AP, it stops after STOP_AP_DELAY.
     //  this allows the user to connect to the softAP after start-up in case a button wasn't

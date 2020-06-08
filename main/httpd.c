@@ -32,28 +32,38 @@ static httpd_handle_t server = NULL;
 char log_buf[LOG_BUF_MAX_LINE_SIZE];
 static TaskHandle_t t_sse_task_handle;
 static QueueHandle_t q_sse_message_queue;
-static putchar_like_t old_function = NULL;
+
 
 // set volatile as a client could be removed at any time and the sse_logging_task 
 // needs to make sure it has an updated copy
 volatile int sse_sockets[MAX_SSE_CLIENTS];
 
-int sse_logging_putchar(int chr) {
-    if(chr == '\n'){
-        // send without the '\n'
+#ifdef CONFIG_IDF_TARGET_ESP32
+    int sse_logging_vprintf(const char *format, va_list arg) {
+        vsprintf(log_buf, format, arg);
         xQueueSendToBack(q_sse_message_queue, log_buf, 0);
-        // 'clear' string
-        log_buf[0] = '\0';    
-    } else {
-        size_t len = strlen(log_buf);
-        if (len < LOG_BUF_MAX_LINE_SIZE - 1) {
-            log_buf[len] = chr;
-            log_buf[len+1] = '\0';
-        }
+
+        // still send to console
+        return vprintf(format, arg);
     }
-    // still send to console
-	return old_function( chr );
-}
+#elif CONFIG_IDF_TARGET_ESP8266
+    int sse_logging_putchar(int chr) {
+        if(chr == '\n'){
+            // send without the '\n'
+            xQueueSendToBack(q_sse_message_queue, log_buf, 0);
+            // 'clear' string
+            log_buf[0] = '\0';    
+        } else {
+            size_t len = strlen(log_buf);
+            if (len < LOG_BUF_MAX_LINE_SIZE - 1) {
+                log_buf[len] = chr;
+                log_buf[len+1] = '\0';
+            }
+        }
+        // still send to console
+        return putchar(chr);
+    }
+#endif
 
 
 void send_sse_message (char* message, char* event) {
@@ -111,8 +121,8 @@ static void status_json_sse_handler()
     #ifdef CONFIG_IDF_TARGET_ESP32
         esp_netif_ip_info_t ip_info;
         esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-        esp_netif_get_ip_info(esp_netif, &ip_info)
-        bool if_status = esp_netif_is_netif_up(esp_netif);
+        esp_netif_get_ip_info(netif, &ip_info);
+        bool if_status = esp_netif_is_netif_up(netif);
     #elif CONFIG_IDF_TARGET_ESP8266
         tcpip_adapter_ip_info_t ip_info;
         ESP_ERROR_CHECK(tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info));
@@ -163,8 +173,12 @@ void free_sse_ctx_func(void *ctx)
 esp_err_t server_side_event_registration_handler(httpd_req_t *req)
 {
     // disable sending to sse_socket until a proper HTTP 200 OK response has been sent back to client
-    old_function = esp_log_set_putchar(old_function);
-
+    #ifdef CONFIG_IDF_TARGET_ESP32
+        esp_log_set_vprintf(vprintf);
+    #elif CONFIG_IDF_TARGET_ESP8266
+        esp_log_set_putchar(putchar);
+    #endif
+    
     int len;
     char buffer[150];
     int i = 0;
@@ -211,7 +225,11 @@ esp_err_t server_side_event_registration_handler(httpd_req_t *req)
     send_sse_message(buffer, "firmware");
 
     // enable sse logging again
-    old_function = esp_log_set_putchar(old_function);  
+    #ifdef CONFIG_IDF_TARGET_ESP32
+        esp_log_set_vprintf(&sse_logging_vprintf);
+    #elif CONFIG_IDF_TARGET_ESP8266
+        esp_log_set_putchar(&sse_logging_putchar);
+    #endif
 
     return ESP_OK;
 }
@@ -828,7 +846,12 @@ esp_err_t start_webserver(void)
         q_sse_message_queue = xQueueCreate( 10, sizeof(char)*LOG_BUF_MAX_LINE_SIZE );
         xTaskCreate(&sse_logging_task, "sse", 2048, NULL, 4, &t_sse_task_handle);
 
-        old_function = esp_log_set_putchar(&sse_logging_putchar);
+        #ifdef CONFIG_IDF_TARGET_ESP32
+            esp_log_set_vprintf(&sse_logging_vprintf);
+        #elif CONFIG_IDF_TARGET_ESP8266
+            esp_log_set_putchar(&sse_logging_putchar);
+        #endif
+        
 
         return ESP_OK;
     }
@@ -848,7 +871,12 @@ void stop_webserver(void)
         ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler));
     #endif
     
-    esp_log_set_putchar(old_function);
+    #ifdef CONFIG_IDF_TARGET_ESP32
+        esp_log_set_vprintf(vprintf);
+    #elif CONFIG_IDF_TARGET_ESP8266
+        esp_log_set_putchar(putchar);
+    #endif
+    
     vTaskDelete(t_sse_task_handle);
     vQueueDelete(q_sse_message_queue);
 

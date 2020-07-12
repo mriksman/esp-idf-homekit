@@ -135,28 +135,25 @@ void start_ap_prov() {
     wifi_config_t wifi_cfg;
     ESP_ERROR_CHECK(esp_wifi_get_config(ESP_IF_WIFI_AP, &wifi_cfg));
 
-    if ( strncmp((const char*) wifi_cfg.ap.ssid, "esp_", 4) == 0 ) {
+    if ( strncmp((const char*) wifi_cfg.ap.ssid, "esp-", 4) == 0 ) {
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA)); 
     } else {
-        wifi_config_t wifi_ap_config = {
-            .ap = {
-                .authmode = WIFI_AUTH_OPEN,
-                .max_connection = 4,
-            },
-        };
-        uint8_t mac;
-        esp_read_mac(&mac, 1);
-        snprintf((char *)wifi_ap_config.ap.ssid, 11, "esp_%02x%02x%02x", (&mac)[3], (&mac)[4], (&mac)[5]);
+        wifi_cfg.ap.authmode = WIFI_AUTH_OPEN;
+        wifi_cfg.ap.max_connection = 4;
+
+        uint8_t macaddr[6];
+        esp_read_mac(macaddr, ESP_MAC_WIFI_SOFTAP);
+        snprintf((char *)wifi_cfg.ap.ssid, 11, "esp-%02x%02x%02x", macaddr[3], macaddr[4], macaddr[5]);
 
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));                        //must be called before esp_wifi_set_config()
-        ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &wifi_ap_config));
+        ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &wifi_cfg));
 
-        ESP_LOGW(TAG, "No previous SSID found. Set to ssid %s  ", (const char*) wifi_ap_config.ap.ssid);
+        ESP_LOGW(TAG, "No previous SSID found. Set to ssid %s  ", (const char*) wifi_cfg.ap.ssid);
     }
 
     start_webserver();
         
-    ESP_LOGI(TAG, "Started softAP and HTTPD Service");
+    ESP_LOGI(TAG, "Started softAP with SSID %s and started HTTPD Service", (const char*) wifi_cfg.ap.ssid);
 }
 
 void stop_ap_prov() {

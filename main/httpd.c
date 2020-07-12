@@ -395,11 +395,12 @@ esp_err_t restart_json_handler(httpd_req_t *req)
         if (cJSON_IsTrue(reset_homekit)) {
             homekit_server_reset();
         }
-        ESP_LOGW(TAG, "Reset nvs = %d, homekit = %d. Restarting...", 
-            cJSON_IsTrue(reset_nvs), cJSON_IsTrue(reset_homekit));
     }
 
     if (err == ESP_OK) {
+        ESP_LOGW(TAG, "Reset nvs = %d, homekit = %d. Restarting...", 
+            cJSON_IsTrue(reset_nvs), cJSON_IsTrue(reset_homekit));
+
         // Just send an OK response. Client can monitor console logs.
         httpd_resp_send(req, NULL, 0);
 
@@ -407,6 +408,8 @@ esp_err_t restart_json_handler(httpd_req_t *req)
         esp_restart();
     }
     else {
+        ESP_LOGE(TAG, "Error %d", err); 
+
         httpd_resp_set_status(req, HTTPD_400);
         httpd_resp_send(req, NULL, 0);
     }
@@ -559,7 +562,27 @@ esp_err_t getlights_json_handler(httpd_req_t *req)
                     cJSON_AddItemToObject(fld, "led_gpio", cJSON_CreateNumber(light_config[i].led_gpio));
                     cJSON_AddItemToObject(fld, "button_gpio", cJSON_CreateNumber(light_config[i].button_gpio));
                     cJSON_AddItemToObject(fld, "is_dimmer", cJSON_CreateBool(light_config[i].is_dimmer));
-                }
+                    cJSON_AddItemToObject(fld, "is_remote", cJSON_CreateBool(light_config[i].is_remote));
+
+                    int remote_cmd_len = snprintf(NULL, 0, "rem_cmd_%d", i);
+                    char *remote_cmd_key = malloc(remote_cmd_len + 1);
+                    snprintf(remote_cmd_key, remote_cmd_len + 1, "rem_cmd_%d", i);
+                    size_t required_size;
+                    err = nvs_get_str(lights_config_handle, remote_cmd_key, NULL, &required_size); //includes zero-terminator
+                    if (err == ESP_OK) {
+                        char *remote_cmd_val = malloc(required_size); 
+                        nvs_get_str(lights_config_handle, remote_cmd_key, remote_cmd_val, &required_size);
+                        cJSON_AddItemToObject(fld, "remote_cmd", cJSON_Parse(remote_cmd_val));
+
+ESP_LOGW("nvs", "key: %s value: %s", remote_cmd_key, remote_cmd_val);
+
+                        free(remote_cmd_val);
+                    } else {
+                        cJSON_AddItemToObject(fld, "remote_cmd", cJSON_CreateNull());
+                    }
+                    free(remote_cmd_key);
+
+                 }
             }
             else {
                 ESP_LOGW(TAG, "error nvs_get_u8 num_lights err %d", err);
@@ -663,6 +686,8 @@ esp_err_t setlights_json_handler(httpd_req_t *req)
             lights_t light_config[num_lights];
             memset(light_config, 0, num_lights * sizeof(lights_t));
 
+            char *remote_cmd[num_lights];
+
             cJSON *fld;
             uint8_t i = 0;
             cJSON_ArrayForEach(fld, lights_json) {
@@ -685,6 +710,14 @@ esp_err_t setlights_json_handler(httpd_req_t *req)
                     }
                 }
                 light_config[i].is_dimmer = cJSON_IsTrue(cJSON_GetObjectItem(fld, "is_dimmer"));
+                light_config[i].is_remote = cJSON_IsTrue(cJSON_GetObjectItem(fld, "is_remote"));
+
+                key = cJSON_GetObjectItem(fld, "remote_cmd");
+                if (!light_config[i].is_remote || !cJSON_IsObject(key)) {
+                    key = cJSON_CreateNull();
+                }
+                remote_cmd[i] = cJSON_PrintUnformatted(key);
+
                 i++;
                 if (i > 4) {
                     break;          // ignore entries over 4
@@ -700,11 +733,15 @@ esp_err_t setlights_json_handler(httpd_req_t *req)
             invert[3] = cJSON_IsTrue(cJSON_GetObjectItem(invert_json, "button_gpio"));
 
             ESP_LOGI(TAG, 
-                "          Light  LED   Button  Dimmable? ");
+                "          Light  LED   Button  Dimmable? Remote?");
             for (i = 0; i < num_lights; i++) {
                 ESP_LOGI(TAG, 
-                "Light %d    %2d     %2d     %2d     %s", (i + 1), light_config[i].light_gpio, light_config[i].led_gpio, 
-                                                                   light_config[i].button_gpio, light_config[i].is_dimmer ? "true" : "false");
+                "Light %d    %2d     %2d     %2d     %s     %s", (i + 1), light_config[i].light_gpio, light_config[i].led_gpio, light_config[i].button_gpio, 
+                                                                    light_config[i].is_dimmer ? "true" : "false", light_config[i].is_remote ? "true" : "false");
+                if (light_config[i].is_remote) {
+                    ESP_LOGI(TAG, 
+                    " Command   %s", remote_cmd[i]);
+                }
             }
             ESP_LOGI(TAG, 
                 "Invert   %5s  %5s  %5s ", invert[1] ? "true" : "false", invert[2] ? "true" : "false", invert[3] ? "true" : "false");
@@ -724,6 +761,18 @@ esp_err_t setlights_json_handler(httpd_req_t *req)
             err = nvs_set_blob(lights_config_handle, "invert", invert, size);
             if (err != ESP_OK) {
                 ESP_LOGW(TAG, "error nvs_set_blob invert size %d err %d", size, err);
+            }
+
+            for (i = 0; i < num_lights; i++) {
+                int remote_cmd_len = snprintf(NULL, 0, "rem_cmd_%d", i);
+                char *remote_cmd_key = malloc(remote_cmd_len + 1);
+                snprintf(remote_cmd_key, remote_cmd_len + 1, "rem_cmd_%d", i);
+                err = nvs_set_str(lights_config_handle, remote_cmd_key, remote_cmd[i]);
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "error nvs_set_str remote_cmd %d err %d", i, err);
+                }
+                free(remote_cmd_key);
+                free(remote_cmd[i]);
             }
         }
         else {

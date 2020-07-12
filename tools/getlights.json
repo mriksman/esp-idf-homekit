@@ -5,13 +5,18 @@
 		 "light_gpio":16,
 		 "led_gpio":13,
 		 "button_gpio":12,
-		 "is_dimmer":true
+		 "is_dimmer":true,
+		 "is_remote":false,
+		 "remote_cmd":null
 		},
 		{
 		 "light_gpio":5,
 		 "led_gpio":4,
 		 "button_gpio":14,
-		 "is_dimmer":false
+		 "is_dimmer":false,
+		 "is_remote":true,
+		 "remote_cmd":{"host":"http://device_ip_address:5556/characteristic","method":"PUT","payload":{"characteristics":[{"aid":1,"iid":9,"value":"ON"},{"aid":1,"iid":9,"value":"BRIGHTNESS"}]}}
+
 		}
 	],
 	"invert": {

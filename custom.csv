@@ -2,5 +2,5 @@
 nvs,      data, nvs,     0x9000,  16K,
 homekit,  0x40, 0,       0xd000,   4K,
 otadata,  data, ota,     0xe000,   8K,
-boot,     app,  ota_0,   0x10000,320K,
-main,     app,  ota_1,          ,640K,
+main,     app,  ota_0,   0x10000,640K,
+boot,     app,  ota_1,          ,320K,

@@ -50,6 +50,7 @@ static bool paired = false;
 
 static led_status_pattern_t ap_mode = LED_STATUS_PATTERN({1000, -1000});
 static led_status_pattern_t not_paired = LED_STATUS_PATTERN({100, -100});
+static led_status_pattern_t remote_error = LED_STATUS_PATTERN({50, -50, 50, -50, 50, -50, 50, -50, 50, -50, 50, -50});
 static led_status_pattern_t normal_mode = LED_STATUS_PATTERN({5, -9995});
 static led_status_pattern_t identify = LED_STATUS_PATTERN({100, -100, 100, -350, 100, -100, 100, -350, 100, -100, 100, -350});
 
@@ -106,10 +107,7 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
             break;
         case HTTP_EVENT_ON_DATA:
             ESP_LOGI(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
-            
             if (esp_http_client_is_chunked_response(evt->client)) {
-                ESP_LOGW(TAG, "total_output %d, this data_len %d, length of buffer %d", output_len, evt->data_len, MAX_HTTP_OUTPUT_BUFFER);
-            
                 if (output_len + evt->data_len > MAX_HTTP_OUTPUT_BUFFER) {
                     ESP_LOGE(TAG, "cannot store more data - buffer full");
                 }
@@ -122,6 +120,10 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
             break;
         case HTTP_EVENT_ON_FINISH:
             ESP_LOGI(TAG, "HTTP_EVENT_ON_FINISH");
+            // null terminate string
+            char *user_data = evt->user_data;
+            user_data[output_len] = '\0';
+            // reset length counter
             output_len = 0;
             break;
         case HTTP_EVENT_DISCONNECTED:
@@ -209,7 +211,7 @@ static void remote_hk_task(void * arg)
                 cJSON *payload_json = cJSON_GetObjectItem(hk_command.light->nvs_command, "payload");
 
     char *out = cJSON_PrintUnformatted(hk_command.light->nvs_command);
-    ESP_LOGW("**NVS PAYLOAD**", "key: \"payload\" value: %s", out);
+    ESP_LOGW("NVS PAYLOAD", "key: \"payload\" value: %s", out);
     free(out);
 
                 // use 'host' and resolve IP address
@@ -222,6 +224,7 @@ static void remote_hk_task(void * arg)
                         ESP_LOGE(TAG, "mdns_query_a error: %s was not found!", host_json->valuestring);
                     }
                     ESP_LOGE(TAG, "mdns_query_a error: query failed");
+                    led_status_signal(led_status, &remote_error);
                     continue;
                 }
                 sprintf(host_ip, IPSTR, IP2STR(&mdns_addr));
@@ -236,6 +239,7 @@ static void remote_hk_task(void * arg)
                     cJSON *key = cJSON_GetObjectItem(payload_item, "aid");
                     if (!cJSON_IsNumber(key)) { 
                         ESP_LOGE(TAG, "error parsing \"key\" : \"aid\"");
+                        led_status_signal(led_status, &remote_error);
                         continue;
                     }
                     sprintf(aid_iid + strlen(aid_iid), "%d.", key->valueint);
@@ -243,6 +247,7 @@ static void remote_hk_task(void * arg)
                     key = cJSON_GetObjectItem(payload_item, "iid");
                     if (!cJSON_IsNumber(key)) { 
                         ESP_LOGE(TAG, "error parsing \"key\" : \"iid\"");
+                        led_status_signal(led_status, &remote_error);
                         continue;
                     }
                     sprintf(aid_iid + strlen(aid_iid), "%d,", key->valueint);
@@ -268,6 +273,7 @@ static void remote_hk_task(void * arg)
                     hk_command.light->client = esp_http_client_init(&config);
                     if (!hk_command.light->client) {
                         ESP_LOGE(TAG, "error esp_http_client_init");
+                        led_status_signal(led_status, &remote_error);
                         continue;
                     }
                 }
@@ -277,14 +283,21 @@ static void remote_hk_task(void * arg)
                 esp_http_client_set_method(hk_command.light->client, HTTP_METHOD_GET);
     
                 // HTTP GET request to retrieve charactereistics of remote HK client
+                // if the remote device has since restarted, the first try will fail
                 err = esp_http_client_perform(hk_command.light->client);
                 if (err != ESP_OK) {
-                    ESP_LOGE(TAG, "GET request failed: 0x%x", err);
                     esp_http_client_close(hk_command.light->client);
-                    continue;
+
+                    // retry
+                    err = esp_http_client_perform(hk_command.light->client);
+                    if (err != ESP_OK) {
+                        ESP_LOGE(TAG, "GET request failed: 0x%x", err);
+                        led_status_signal(led_status, &remote_error);
+                        continue;
+                    }
                 }
 
-    ESP_LOGW(TAG, "%s", local_response_buffer);
+    ESP_LOGW("RESPONSE", "%s", local_response_buffer);
 
                 // **** parse the response returned from the hk client device ****//
                 cJSON *root_resp = cJSON_Parse(local_response_buffer);
@@ -292,6 +305,7 @@ static void remote_hk_task(void * arg)
                 if (!characteristics_json || !cJSON_IsArray(characteristics_json)) {
                     ESP_LOGE(TAG, "key: \"characteristics\" not found or is not a json array");
                     cJSON_Delete(root_resp);
+                    led_status_signal(led_status, &remote_error);
                     continue;
                 }
 
@@ -328,7 +342,28 @@ static void remote_hk_task(void * arg)
                     cJSON *value_key = cJSON_GetObjectItem(characteristics_item, "value");
                     cJSON *fld;
 
-                    if (strcmp(type_key->valuestring, HOMEKIT_CHARACTERISTIC_BRIGHTNESS) == 0) {
+                    // OPTIONAL CHARACTERISTIC for remote switch identifier
+                    if (strcmp(type_key->valuestring, "02B77067-DA5D-493C-829D-F6C5DCFE5C28") == 0){
+                        // Go through the NVS payload and find what value to send to remote device;
+                        cJSON_ArrayForEach(payload_item, payload_json) {
+                            cJSON *nvs_aid = cJSON_GetObjectItem(payload_item, "aid");
+                            cJSON *nvs_iid = cJSON_GetObjectItem(payload_item, "iid");
+                            if (nvs_aid->valueint == aid_key->valueint &&
+                                  nvs_iid->valueint == iid_key->valueint) {
+                                cJSON *nvs_value = cJSON_GetObjectItem(payload_item, "value");
+                                if (!cJSON_IsNumber(nvs_value)) { 
+                                    ESP_LOGE(TAG, "error parsing \"key\" : \"nvs_value\"");
+                                } else {
+                                    cJSON_AddItemToArray(characteristics_cmd_json, fld = cJSON_CreateObject());
+                                    cJSON_AddItemToObject(fld, "aid", cJSON_CreateNumber(aid_key->valueint));
+                                    cJSON_AddItemToObject(fld, "iid", cJSON_CreateNumber(iid_key->valueint));
+                                    cJSON_AddItemToObject(fld, "value", cJSON_CreateNumber(nvs_value->valueint));
+                                }
+                            }
+                        }
+                    }
+
+                    else if (strcmp(type_key->valuestring, HOMEKIT_CHARACTERISTIC_BRIGHTNESS) == 0) {
                         if (hk_command.command == FULL_ON) {
                             cJSON_AddItemToArray(characteristics_cmd_json, fld = cJSON_CreateObject());
                             cJSON_AddItemToObject(fld, "aid", cJSON_CreateNumber(aid_key->valueint));
@@ -336,6 +371,7 @@ static void remote_hk_task(void * arg)
                             cJSON_AddItemToObject(fld, "value", cJSON_CreateNumber(100));
                         }
                     }
+
                     else if (strcmp(type_key->valuestring, HOMEKIT_CHARACTERISTIC_ON) == 0) {
                         cJSON_AddItemToArray(characteristics_cmd_json, fld = cJSON_CreateObject());
                         cJSON_AddItemToObject(fld, "aid", cJSON_CreateNumber(aid_key->valueint));
@@ -347,9 +383,6 @@ static void remote_hk_task(void * arg)
                             cJSON_AddItemToObject(fld, "value", cJSON_CreateBool(!cJSON_IsTrue(value_key)));
                         }
                     }
-                    else {
-                        // Set the OPTIONAL CHARACTERISTIC for Stairs here?
-                    }
                 }
                 // finished with 'root_resp' | 'characteristic_json'
                 cJSON_Delete(root_resp);
@@ -358,7 +391,7 @@ static void remote_hk_task(void * arg)
             char *out = cJSON_PrintUnformatted(root_cmd);
             cJSON_Delete(root_cmd);
 
-    ESP_LOGW(TAG, "key: \"characteristics\" value: %s", out);
+    ESP_LOGW("COMMAND", "key: \"characteristics\" value: %s", out);
             
             local_response_buffer[0] = '\0';
 
@@ -374,10 +407,11 @@ static void remote_hk_task(void * arg)
             if (err == ESP_OK) {
                 ESP_LOGI(TAG, "HTTP POST Status = %d", esp_http_client_get_status_code(hk_command.light->client));
 
-    ESP_LOGW(TAG, "%s", local_response_buffer);
+    ESP_LOGW("HTTP POST FINISHED", "%s", local_response_buffer);
 
             } else {
                 ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
+                led_status_signal(led_status, &remote_error);
             }    
             free(out);
         }

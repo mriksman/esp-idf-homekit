@@ -89,4 +89,4 @@ def send_update():
         fp.write(request.data)
     return "File downloaded", 200
 
-app.run(host='0.0.0.0', debug=True)
+app.run(host='0.0.0.0', debug=True, threaded=True)

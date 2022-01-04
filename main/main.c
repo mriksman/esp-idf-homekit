@@ -596,12 +596,14 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
                 }
             }
         }
+        // start AP and web GUI for config
         else if (event_id == BUTTON_EVENT_LONG_PRESS) {
             ESP_LOGI(TAG, "button long press event. start soft ap");  
             //start_ap_prov();        
             xTaskCreate(&start_ap_task, "start_ap", 1536, NULL, tskIDLE_PRIORITY, NULL);
         }
         else {
+            // on/off
             if (event_id == 1) {
                 if (light->is_remote) {
                     remote_hk_t remote_cmd = {
@@ -624,6 +626,7 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
                     homekit_characteristic_notify(on_c, HOMEKIT_BOOL(!on));
                 }
             } 
+            // turn on full brightness
             else if (event_id == 2 && light->is_dimmer) {
                 if (light->is_remote) {
                     remote_hk_t remote_cmd = {
@@ -649,9 +652,15 @@ static void main_event_handler(void* arg, esp_event_base_t event_base,
                     light->dim_direction = -1;
                 }
             } 
-
-
-            else if (event_id == 4) {
+            // restart 
+            else if (event_id == 5) {
+                // use 'not_paired' flashing (fast flash) to indicate about to restart
+                led_status_set(led_status, &not_paired);
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                esp_restart();
+            } 
+            // print heap usage to console
+            else if (event_id == 10) {
                 ESP_LOGW(TAG, "HEAP %d",  heap_caps_get_free_size(MALLOC_CAP_8BIT));
 
                 char buffer[400];
